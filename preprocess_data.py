@@ -223,18 +223,41 @@ def _synthesize_billing_increment(df: pd.DataFrame) -> pd.DataFrame:
 #     return raw.astype("string")
 
 
+# def _raw_from_ws(ws) -> pd.DataFrame:
+#     # read cells, not values_only
+#     rows_as_text = []
+#     for row in ws.iter_rows(values_only=False):
+#         out = []
+#         for c in row:
+#             v = c.value
+#             # if it's a datetime/date, render as M/D/YYYY (unpadded like Excel often shows)
+#             if hasattr(c, "is_date") and c.is_date and isinstance(v, (datetime, )):
+#                 out.append(f"{v.month}/{v.day}/{v.year}")
+#             else:
+#                 out.append("" if v is None else str(v))
+#         rows_as_text.append(out)
+
+#     raw = pd.DataFrame(rows_as_text)
+#     raw.dropna(how="all", inplace=True)
+#     raw.dropna(axis=1, how="all", inplace=True)
+#     raw.reset_index(drop=True, inplace=True)
+#     return raw.astype("string")
+
+
+from datetime import date, datetime
+
 def _raw_from_ws(ws) -> pd.DataFrame:
-    # read cells, not values_only
     rows_as_text = []
     for row in ws.iter_rows(values_only=False):
         out = []
         for c in row:
             v = c.value
-            # if it's a datetime/date, render as M/D/YYYY (unpadded like Excel often shows)
-            if hasattr(c, "is_date") and c.is_date and isinstance(v, (datetime, )):
-                out.append(f"{v.month}/{v.day}/{v.year}")
+            # Don’t force an Excel-specific format; just stringify whatever is there.
+            # This yields ISO-like strings for date/datetime and preserves text inputs.
+            if v is None:
+                out.append("")
             else:
-                out.append("" if v is None else str(v))
+                out.append(str(v))  # datetime/date -> "YYYY-MM-DD[ HH:MM:SS]"; text stays as-is
         rows_as_text.append(out)
 
     raw = pd.DataFrame(rows_as_text)
@@ -242,6 +265,7 @@ def _raw_from_ws(ws) -> pd.DataFrame:
     raw.dropna(axis=1, how="all", inplace=True)
     raw.reset_index(drop=True, inplace=True)
     return raw.astype("string")
+
 
 
 # ── PATCH 1: make the pandas reader actually try multiple engines & the target sheet ──
