@@ -206,17 +206,38 @@ def _synthesize_billing_increment(df: pd.DataFrame) -> pd.DataFrame:
 
 #________________________________ read raw ──────────────────────────────────
 
-def _raw_from_ws(ws) -> pd.DataFrame:
-    try:
-        # Try to calculate dimensions without forcing
-        ws.calculate_dimension()
-    except ValueError:
-        # If it fails, use calculate_dimension with force=True
-        print("DEBUG: Extraction failed without force; retrying with force=True")
-        ws.calculate_dimension(force=True)
+# def _raw_from_ws(ws) -> pd.DataFrame:
+#     try:
+#         # Try to calculate dimensions without forcing
+#         ws.calculate_dimension()
+#     except ValueError:
+#         # If it fails, use calculate_dimension with force=True
+#         print("DEBUG: Extraction failed without force; retrying with force=True")
+#         ws.calculate_dimension(force=True)
 
-    rows = list(ws.iter_rows(values_only=True))
-    raw = pd.DataFrame(rows)
+#     rows = list(ws.iter_rows(values_only=True))
+#     raw = pd.DataFrame(rows)
+#     raw.dropna(how="all", inplace=True)
+#     raw.dropna(axis=1, how="all", inplace=True)
+#     raw.reset_index(drop=True, inplace=True)
+#     return raw.astype("string")
+
+
+def _raw_from_ws(ws) -> pd.DataFrame:
+    # read cells, not values_only
+    rows_as_text = []
+    for row in ws.iter_rows(values_only=False):
+        out = []
+        for c in row:
+            v = c.value
+            # if it's a datetime/date, render as M/D/YYYY (unpadded like Excel often shows)
+            if hasattr(c, "is_date") and c.is_date and isinstance(v, (datetime, )):
+                out.append(f"{v.month}/{v.day}/{v.year}")
+            else:
+                out.append("" if v is None else str(v))
+        rows_as_text.append(out)
+
+    raw = pd.DataFrame(rows_as_text)
     raw.dropna(how="all", inplace=True)
     raw.dropna(axis=1, how="all", inplace=True)
     raw.reset_index(drop=True, inplace=True)
@@ -815,44 +836,78 @@ def clean_billing_increment(val) -> str:
     return f"{nums[0]}/{nums[0]}"
 
 
-def normalize_dates(df, column_name, date_format_email):
-    """
-    Normalize the date column to the required format and strip the time based on the date_format_email.
-    """
+# def normalize_dates(df, column_name, date_format_email):
+#     """
+#     Normalize the date column to the required format and strip the time based on the date_format_email.
+#     """
 
-    # Remove any time-related part after the date using regex
-    print(f"\n\n\nBefore extracting date part:\n{df[column_name]}\n\n\n")
+#     # Remove any time-related part after the date using regex
+#     print(f"\n\n\nBefore extracting date part:\n{df[column_name]}\n\n\n")
 
-    # Replace . or / with -
-    df[column_name] = df[column_name].str.replace(r'[./]', '-', regex=True)
+#     # Replace . or / with -
+#     df[column_name] = df[column_name].str.replace(r'[./]', '-', regex=True)
 
-    print(f"\n\n\nAfter replacing . or / with -:\n{df[column_name]}\n\n\n")
+#     print(f"\n\n\nAfter replacing . or / with -:\n{df[column_name]}\n\n\n")
 
-    df[column_name] = df[column_name].astype(str).str.extract(r'(\d{1,4}[-./]\d{1,2}[-./]\d{1,4})')[0]
+#     df[column_name] = df[column_name].astype(str).str.extract(r'(\d{1,4}[-./]\d{1,2}[-./]\d{1,4})')[0]
    
 
-    print(f"\n\n\nAfter extracting date part:\n{df[column_name]}\n\n\n")
+#     print(f"\n\n\nAfter extracting date part:\n{df[column_name]}\n\n\n")
 
-    if date_format_email == 'MM-DD-YYYY':
-        # Handle MM-DD-YYYY format, convert to YYYY-MM-DD
-        df[column_name] = pd.to_datetime(df[column_name], format='%m-%d-%Y', errors='coerce')
-        df[column_name] = df[column_name].dt.strftime('%Y-%m-%d')
+#     if date_format_email == 'MM-DD-YYYY':
+#         # Handle MM-DD-YYYY format, convert to YYYY-MM-DD
+#         df[column_name] = pd.to_datetime(df[column_name], format='%m-%d-%Y', errors='coerce')
+#         df[column_name] = df[column_name].dt.strftime('%Y-%m-%d')
 
-    elif date_format_email == 'DD-MM-YYYY':
-        # Handle DD-MM-YYYY format, convert to YYYY-MM-DD
-        df[column_name] = pd.to_datetime(df[column_name], format='%d-%m-%Y', errors='coerce')
-        df[column_name] = df[column_name].dt.strftime('%Y-%m-%d')
+#     elif date_format_email == 'DD-MM-YYYY':
+#         # Handle DD-MM-YYYY format, convert to YYYY-MM-DD
+#         df[column_name] = pd.to_datetime(df[column_name], format='%d-%m-%Y', errors='coerce')
+#         df[column_name] = df[column_name].dt.strftime('%Y-%m-%d')
 
-    elif date_format_email == 'YYYY-MM-DD':
-        # Handle YYYY-MM-DD format, no conversion needed
-        df[column_name] = pd.to_datetime(df[column_name], format='%Y-%m-%d', errors='coerce')
-        df[column_name] = df[column_name].dt.strftime('%Y-%m-%d')
+#     elif date_format_email == 'YYYY-MM-DD':
+#         # Handle YYYY-MM-DD format, no conversion needed
+#         df[column_name] = pd.to_datetime(df[column_name], format='%Y-%m-%d', errors='coerce')
+#         df[column_name] = df[column_name].dt.strftime('%Y-%m-%d')
 
-    else:
-        # If the date format doesn't match any of the three options, raise an exception
+#     else:
+#         # If the date format doesn't match any of the three options, raise an exception
+#         raise ValueError(f"Unsupported date format: {date_format_email}")
+
+#     return df
+
+
+def normalize_dates(df: pd.DataFrame, column_name: str, date_format_email: str) -> pd.DataFrame:
+    """
+    Clean a date column and produce YYYY-MM-DD strings, using a known input format:
+      - Supports MM-DD-YYYY, DD-MM-YYYY, YYYY-MM-DD
+      - Strips timezones/UTC markers
+      - Replaces '.' or '/' with '-'
+      - Removes any time portion
+    """
+    # 1) to string + trim
+    s = df[column_name].astype(str).str.strip()
+
+    # 2) drop TZ junk like 'UTC', 'Z', 'zz', '+0000', '+03:00'
+    s = s.str.replace(r'\s*(UTC|Z|zz|[+\-]\d{2}:?\d{2}|[+\-]\d{4})\s*', '', regex=True)
+
+    # 3) unify separators and strip trailing times
+    s = s.str.replace(r'[./]', '-', regex=True)
+    s = s.str.extract(r'(\d{1,4}-\d{1,2}-\d{1,4})')[0]
+
+    # 4) strict parse by the declared email format, then output YYYY-MM-DD
+    fmt_map = {
+        'MM-DD-YYYY': '%m-%d-%Y',
+        'DD-MM-YYYY': '%d-%m-%Y',
+        'YYYY-MM-DD': '%Y-%m-%d',
+    }
+    fmt_in = fmt_map.get((date_format_email or '').strip().upper())
+    if not fmt_in:
         raise ValueError(f"Unsupported date format: {date_format_email}")
 
+    parsed = pd.to_datetime(s, format=fmt_in, errors='coerce')
+    df[column_name] = parsed.dt.strftime('%Y-%m-%d')  # final canonical form as string
     return df
+
 
 
 
