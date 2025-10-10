@@ -481,6 +481,82 @@ def fetch_authorized_sender_emails(active_only: bool = True) -> List[str]:
 # ____________ Ingesting file for date format review _________________
 
 
+# def insert_or_update_ingest_file(
+#     *,
+#     email_address: Optional[str],
+#     subject: Optional[str],
+#     received_at: Optional[datetime],
+#     processed_at: Optional[datetime],
+#     file_path: str,
+#     preview_cache: Optional[Dict[str, Any]] = None,
+#     error_message: Optional[str] = None,
+# ) -> int:
+#     """
+#     Upsert a single row into ingest_files keyed by unique(file_path).
+
+#     Columns written (exactly what you requested):
+#       email_address, subject, received_at, processed_at, file_path, preview_cache, error_message
+
+#     Leaves these for later flows or defaults: mime_type, status, date_format, is_processed,
+#     approved_by, approved_at.
+
+#     Returns: the row's id.
+#     """
+#     if not file_path:
+#         raise ValueError("file_path is required")
+
+#     sql = """
+#         INSERT INTO ingest_files (
+#             email_address,
+#             subject,
+#             received_at,
+#             processed_at,
+#             file_path,
+#             preview_cache,
+#             error_message,
+#             created_at,
+#             updated_at
+#         )
+#         VALUES (
+#             %(email_address)s,
+#             %(subject)s,
+#             %(received_at)s,
+#             %(processed_at)s,
+#             %(file_path)s,
+#             %(preview_cache)s,
+#             %(error_message)s,
+#             NOW(),
+#             NOW()
+#         )
+#         ON CONFLICT (file_path) DO UPDATE SET
+#             email_address = EXCLUDED.email_address,
+#             subject       = EXCLUDED.subject,
+#             received_at   = EXCLUDED.received_at,
+#             processed_at  = EXCLUDED.processed_at,
+#             preview_cache = EXCLUDED.preview_cache,
+#             error_message = EXCLUDED.error_message,
+#             updated_at    = NOW()
+#         RETURNING id;
+#     """
+
+#     params = {
+#         "email_address": email_address,
+#         "subject": subject,
+#         "received_at": received_at,
+#         "processed_at": processed_at,
+#         "file_path": file_path,
+#         # Json(...) ensures jsonb storage if the column is jsonb
+#         "preview_cache": Json(preview_cache) if preview_cache is not None else None,
+#         "error_message": error_message,
+#     }
+
+#     with get_conn() as conn, conn.cursor() as cur:
+#         cur.execute(sql, params)
+#         new_id = cur.fetchone()[0]
+#         conn.commit()
+#         return new_id
+
+
 def insert_or_update_ingest_file(
     *,
     email_address: Optional[str],
@@ -490,15 +566,22 @@ def insert_or_update_ingest_file(
     file_path: str,
     preview_cache: Optional[Dict[str, Any]] = None,
     error_message: Optional[str] = None,
+    # NEW optional fields
+    status: Optional[bool] = None,
+    date_format: Optional[str] = None,
+    approved_at: Optional[datetime] = None,
+    is_format_auto_detected: Optional[bool] = None,
 ) -> int:
     """
     Upsert a single row into ingest_files keyed by unique(file_path).
 
-    Columns written (exactly what you requested):
-      email_address, subject, received_at, processed_at, file_path, preview_cache, error_message
+    Always writable:
+      email_address, subject, received_at, processed_at, file_path,
+      preview_cache (jsonb), error_message, created_at/updated_at.
 
-    Leaves these for later flows or defaults: mime_type, status, date_format, is_processed,
-    approved_by, approved_at.
+    Optionally writable (only if provided; otherwise existing values are kept):
+      status (bool), date_format (text), approved_at (timestamp), 
+      is_format_auto_detected (bool).
 
     Returns: the row's id.
     """
@@ -514,6 +597,10 @@ def insert_or_update_ingest_file(
             file_path,
             preview_cache,
             error_message,
+            status,
+            date_format,
+            approved_at,
+            is_format_auto_detected,
             created_at,
             updated_at
         )
@@ -525,17 +612,25 @@ def insert_or_update_ingest_file(
             %(file_path)s,
             %(preview_cache)s,
             %(error_message)s,
+            %(status)s,
+            %(date_format)s,
+            %(approved_at)s,
+            %(is_format_auto_detected)s,
             NOW(),
             NOW()
         )
         ON CONFLICT (file_path) DO UPDATE SET
-            email_address = EXCLUDED.email_address,
-            subject       = EXCLUDED.subject,
-            received_at   = EXCLUDED.received_at,
-            processed_at  = EXCLUDED.processed_at,
-            preview_cache = EXCLUDED.preview_cache,
-            error_message = EXCLUDED.error_message,
-            updated_at    = NOW()
+            email_address           = EXCLUDED.email_address,
+            subject                 = EXCLUDED.subject,
+            received_at             = EXCLUDED.received_at,
+            processed_at            = EXCLUDED.processed_at,
+            preview_cache           = EXCLUDED.preview_cache,
+            error_message           = EXCLUDED.error_message,
+            status                  = COALESCE(EXCLUDED.status, ingest_files.status),
+            date_format             = COALESCE(EXCLUDED.date_format, ingest_files.date_format),
+            approved_at             = COALESCE(EXCLUDED.approved_at, ingest_files.approved_at),
+            is_format_auto_detected = COALESCE(EXCLUDED.is_format_auto_detected, ingest_files.is_format_auto_detected),
+            updated_at              = NOW()
         RETURNING id;
     """
 
@@ -545,9 +640,13 @@ def insert_or_update_ingest_file(
         "received_at": received_at,
         "processed_at": processed_at,
         "file_path": file_path,
-        # Json(...) ensures jsonb storage if the column is jsonb
         "preview_cache": Json(preview_cache) if preview_cache is not None else None,
         "error_message": error_message,
+        # NEW fields (pass None when not setting)
+        "status": status,
+        "date_format": date_format,
+        "approved_at": approved_at,
+        "is_format_auto_detected": is_format_auto_detected,
     }
 
     with get_conn() as conn, conn.cursor() as cur:
@@ -555,6 +654,7 @@ def insert_or_update_ingest_file(
         new_id = cur.fetchone()[0]
         conn.commit()
         return new_id
+
 
 
 def bulk_upsert_ingest_files(

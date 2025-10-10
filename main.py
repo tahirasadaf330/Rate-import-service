@@ -22,10 +22,10 @@ import json
 from pathlib import Path
 from preprocess_data import load_clean_rates, _raw_from_excel_pandas
 from typing import Iterable, Tuple, Optional, Dict, Any, List, Mapping
-from datetime import datetime, timezone
 from database import insert_rate_upload, bulk_insert_rate_upload_details, push_failed_emails_json_to_db, fetch_approved_unprocessed_paths_map, insert_rejected_email_row, insert_or_update_ingest_file, mark_ingest_processed
 import pandas as pd
-from datetime import datetime
+from datetime import date, datetime, timezone
+
 import re
 
 
@@ -92,16 +92,184 @@ def _first_attachment_path(meta: dict) -> Optional[Path]:
         return None
     return Path(base_dir) / first_item
 
+#############################################
+# Helpers for verifying the date format
+
+
+def _read_excel_native(path: str, sheet=0) -> pd.DataFrame:
+    """
+    Read an Excel sheet WITHOUT dtype=str so real Excel date cells
+    stay as datetime/date/Timestamp. Tries calamine first, then openpyxl.
+    """
+    last_err = None
+    for eng in ("calamine", "openpyxl"):
+        try:
+            return pd.read_excel(path, sheet_name=sheet, header=None, engine=eng)
+        except Exception as e:
+            last_err = e
+            continue
+    raise last_err or RuntimeError("Failed reading excel with calamine/openpyxl")
+
+def _has_native_datetimes(df: pd.DataFrame, min_hits: int = 5) -> bool:
+    """
+    True if the grid appears to contain native datetime/date cells
+    (either a datetime64 column or at least `min_hits` datetime-like objects).
+    """
+    # fast path: any datetime64 dtype column
+    if any(pd.api.types.is_datetime64_any_dtype(t) for t in df.dtypes):
+        return True
+
+    # slower scan: mixed-type cells
+    hits = 0
+    for v in df.to_numpy().ravel():
+        if isinstance(v, (datetime, date, pd.Timestamp)):
+            hits += 1
+            if hits >= min_hits:
+                return True
+    return False
+
+###############################################################
+
+# def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -> tuple[int, int, int]:
+#     """
+#     Walk attachments/* folders, and for each folder whose metadata.json has
+#     no 'date_verification_ingestion' (or it's False):
+#       - pick the first attachment
+#       - read first 200 rows (csv or excel via _raw_from_excel_pandas)
+#       - build preview_cache (list[dict] -> col1..colN)
+#       - insert into ingest_files (email_address, subject, received_at, processed_at, file_path, preview_cache, error_message)
+#       - set metadata['date_verification_ingestion'] = True
+
+#     Returns: (scanned_folders, inserted_rows, skipped_folders)
+#     """
+#     root = Path(attachments_root).expanduser().resolve()
+#     if not root.exists():
+#         print(f"[INGEST] attachments root not found: {root}")
+#         return (0, 0, 0)
+
+#     scanned = 0
+#     inserted = 0
+#     skipped = 0
+
+#     for folder in sorted(root.iterdir()):
+#         if not folder.is_dir():
+#             continue
+#         scanned += 1
+
+#         meta_path = folder / "metadata.json"
+#         if not meta_path.exists():
+#             print(f"[INGEST][SKIP] {folder.name}: no metadata.json")
+#             skipped += 1
+#             continue
+
+#         try:
+#             with meta_path.open("r", encoding="utf-8") as f:
+#                 meta = json.load(f) or {}
+#         except Exception as e:
+#             print(f"[INGEST][SKIP] {folder.name}: failed reading metadata.json: {e}")
+#             skipped += 1
+#             continue
+
+#         # Skip if already ingested for manual date verification
+#         if bool(meta.get("date_verification_ingestion")):
+#             # already processed this folder for manual date step
+#             continue
+
+#         # Step 2: find first attachment
+#         fpath = _first_attachment_path(meta)
+#         if not fpath:
+#             print(f"[INGEST][SKIP] {folder.name}: metadata.attachments missing/empty")
+#             skipped += 1
+#             continue
+
+#         # Build the preview_cache
+#         preview_cache: list[dict] = []
+#         error_message: Optional[str] = None
+
+#         try:
+#             ext = fpath.suffix.lower()
+#             if ext == ".csv":
+#                 # treat as raw grid; include header row as data by using header=None
+#                 df = pd.read_csv(str(fpath), header=None, nrows=MAX_PREVIEW_ROWS, dtype=str, on_bad_lines="skip")
+#                 preview_cache = _df_preview_records(df, MAX_PREVIEW_ROWS)
+#             elif ext in EXCEL_EXTS:
+#                 # df = _raw_from_excel_pandas(str(fpath), sheet=0)  # your robust multi-engine reader
+#                 # preview_cache = _df_preview_records(df, MAX_PREVIEW_ROWS)
+#                 # 1) read WITHOUT dtype=str so we can inspect native datetimes
+#                 df_native = _read_excel_native(str(fpath), sheet=0)
+
+#                 # 2) detect if Excel dates are truly native (auto-detected by Excel)
+#                 autodetected = _has_native_datetimes(df_native)
+
+#                 # 3) build the preview from a stringified copy (UI-friendly)
+#                 preview_cache = _df_preview_records(df_native, MAX_PREVIEW_ROWS)
+
+#                 # 4) record the detection flag in memory for later write to metadata
+#                 # (we’ll persist it right after insert_or_update_ingest_file succeeds)
+#             else:
+#                 # optional: best-effort text read as CSV
+#                 try:
+#                     df = pd.read_csv(str(fpath), header=None, nrows=MAX_PREVIEW_ROWS, dtype=str, engine="python")
+#                     preview_cache = _df_preview_records(df, MAX_PREVIEW_ROWS)
+#                 except Exception as e2:
+#                     raise RuntimeError(f"Unsupported file type {ext} and CSV fallback failed: {e2}") from e2
+#         except Exception as e:
+#             error_message = f"preview build failed: {e}"
+#             preview_cache = []  # still ingest a row with the error
+
+#         # Collect DB fields
+#         email_address = (meta.get("sender") or "").strip() or None
+#         subject = (meta.get("subject") or "").strip() or None
+#         received_at = _parse_iso_utc_dt(meta.get("receivedDateTime_raw"))
+#         processed_at = _parse_iso_utc_dt(meta.get("processed_at_utc"))
+#         file_path = str(fpath)
+
+#         try:
+#             _id = insert_or_update_ingest_file(
+#                 email_address=email_address,
+#                 subject=subject,
+#                 received_at=received_at,
+#                 processed_at=processed_at,
+#                 file_path=file_path,
+#                 preview_cache=preview_cache,
+#                 error_message=error_message,
+#             )
+#             inserted += 1
+#             print(f"[INGEST][OK] id={_id} -> {folder.name} :: {fpath.name}")
+
+#             # Mark folder as done for this step
+#             meta["date_verification_ingestion"] = True
+#             with meta_path.open("w", encoding="utf-8") as f:
+#                 json.dump(meta, f, ensure_ascii=False, indent=2)
+#         except Exception as db_e:
+#             print(f"[INGEST][ERR] DB insert failed for {folder.name}: {db_e}")
+#             # do NOT set the flag so we can retry later
+
+#     print(f"[INGEST] summary: scanned={scanned}, inserted={inserted}, skipped={skipped}")
+#     return (scanned, inserted, skipped)
+
+
+
+
+MAX_PREVIEW_ROWS = 200
+EXCEL_EXTS = ('.xlsx', '.xlsm', '.xls')
+
 def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -> tuple[int, int, int]:
     """
     Walk attachments/* folders, and for each folder whose metadata.json has
     no 'date_verification_ingestion' (or it's False):
       - pick the first attachment
-      - read first 200 rows (csv or excel via _raw_from_excel_pandas)
-      - build preview_cache (list[dict] -> col1..colN)
-      - insert into ingest_files (email_address, subject, received_at, processed_at, file_path, preview_cache, error_message)
-      - set metadata['date_verification_ingestion'] = True
+      - build preview_cache (first 200 rows, stringified)
+      - INSERT/UPSERT into ingest_files
+      - mark metadata['date_verification_ingestion'] = True
 
+    NEW:
+      - For Excel files, if the preview read shows native datetime/date cells,
+        we auto-approve and set:
+          DB:  status=True, date_format="YYYY-MM-DD",
+               approved_at=now(UTC), is_format_auto_detected=True
+          metadata: date_verification_ingestion_status=True,
+                    date_format_identified="YYYY-MM-DD"
     Returns: (scanned_folders, inserted_rows, skipped_folders)
     """
     root = Path(attachments_root).expanduser().resolve()
@@ -134,7 +302,6 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
 
         # Skip if already ingested for manual date verification
         if bool(meta.get("date_verification_ingestion")):
-            # already processed this folder for manual date step
             continue
 
         # Step 2: find first attachment
@@ -147,26 +314,35 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
         # Build the preview_cache
         preview_cache: list[dict] = []
         error_message: Optional[str] = None
+        autodetected: bool = False  # only possible for Excel
 
         try:
             ext = fpath.suffix.lower()
+
             if ext == ".csv":
-                # treat as raw grid; include header row as data by using header=None
+                # CSV: raw grid, all strings; manual format later
                 df = pd.read_csv(str(fpath), header=None, nrows=MAX_PREVIEW_ROWS, dtype=str, on_bad_lines="skip")
                 preview_cache = _df_preview_records(df, MAX_PREVIEW_ROWS)
+
             elif ext in EXCEL_EXTS:
-                df = _raw_from_excel_pandas(str(fpath), sheet=0)  # your robust multi-engine reader
-                preview_cache = _df_preview_records(df, MAX_PREVIEW_ROWS)
+                # Read natively (no dtype=str) to detect Excel-native date cells
+                df_native = _read_excel_native(str(fpath), sheet=0)
+                autodetected = _has_native_datetimes(df_native)
+                # Stringified preview for UI
+                preview_cache = _df_preview_records(df_native, MAX_PREVIEW_ROWS)
+
             else:
-                # optional: best-effort text read as CSV
+                # best-effort text read as CSV
                 try:
                     df = pd.read_csv(str(fpath), header=None, nrows=MAX_PREVIEW_ROWS, dtype=str, engine="python")
                     preview_cache = _df_preview_records(df, MAX_PREVIEW_ROWS)
                 except Exception as e2:
                     raise RuntimeError(f"Unsupported file type {ext} and CSV fallback failed: {e2}") from e2
+
         except Exception as e:
             error_message = f"preview build failed: {e}"
             preview_cache = []  # still ingest a row with the error
+            autodetected = False
 
         # Collect DB fields
         email_address = (meta.get("sender") or "").strip() or None
@@ -174,6 +350,16 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
         received_at = _parse_iso_utc_dt(meta.get("receivedDateTime_raw"))
         processed_at = _parse_iso_utc_dt(meta.get("processed_at_utc"))
         file_path = str(fpath)
+
+        # NEW: optional DB flags when auto-detected for Excel
+        upsert_kwargs = {}
+        if ext in EXCEL_EXTS and autodetected:
+            upsert_kwargs.update({
+                "status": True,
+                "date_format": "YYYY-MM-DD",
+                "approved_at": datetime.now(timezone.utc),
+                "is_format_auto_detected": True,
+            })
 
         try:
             _id = insert_or_update_ingest_file(
@@ -184,20 +370,29 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
                 file_path=file_path,
                 preview_cache=preview_cache,
                 error_message=error_message,
+                **upsert_kwargs,  # only applies if autodetected True
             )
             inserted += 1
             print(f"[INGEST][OK] id={_id} -> {folder.name} :: {fpath.name}")
 
-            # Mark folder as done for this step
+            # Always mark the ingestion pass as done
             meta["date_verification_ingestion"] = True
+
+            # If we auto-detected native dates for Excel, mark folder approved too
+            if ext in EXCEL_EXTS and autodetected:
+                meta["date_verification_ingestion_status"] = True
+                meta["date_format_identified"] = "YYYY-MM-DD"
+
             with meta_path.open("w", encoding="utf-8") as f:
                 json.dump(meta, f, ensure_ascii=False, indent=2)
+
         except Exception as db_e:
             print(f"[INGEST][ERR] DB insert failed for {folder.name}: {db_e}")
             # do NOT set the flag so we can retry later
 
     print(f"[INGEST] summary: scanned={scanned}, inserted={inserted}, skipped={skipped}")
     return (scanned, inserted, skipped)
+
 
 def mark_date_verification_ingestion(path_to_format: Mapping[str, Optional[str]]) -> Tuple[int, int, int]:
     """
