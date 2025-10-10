@@ -585,59 +585,10 @@ def find_jerasoft_file(folder: Path) -> Optional[Path]:
     )
     return candidates[0] if candidates else None
 
-# def vendor_files(folder: Path) -> list[Path]:
-#     """
-#     Return vendor files to compare, preferring *_cleaned.* when both exist.
-#     Excludes metadata.json and any JeraSoft comparison outputs (raw or cleaned).
-#     """
-#     def is_jerasoft(p: Path) -> bool:
-#         n = p.name.lower()
-#         return (
-#             n == "jerasoft_comparison_all.xlsx"
-#             or n == "jerasoft_comparison_all_cleaned.xlsx"
-#             or n.endswith("_jerasoft_comparison.xlsx")
-#             or n.endswith("_jerasoft_comparison_cleaned.xlsx")
-#         )
-
-#     # collect candidates
-#     candidates: list[Path] = []
-#     for f in sorted(folder.iterdir()):
-#         if not f.is_file():
-#             continue
-#         if f.name.lower() == "metadata.json":
-#             continue
-#         if f.suffix.lower() not in ALLOWED_EXTS:
-#             continue
-#         if is_jerasoft(f):
-#             continue
-#         candidates.append(f)
-
-#     # prefer *_cleaned over raw twin
-#     by_base: dict[str, dict[str, Path]] = {}
-#     for f in candidates:
-#         stem = f.stem
-#         is_cleaned = stem.endswith("_cleaned")
-#         base_stem = stem[:-8] if is_cleaned else stem  # strip "_cleaned"
-#         key = f"{base_stem}{f.suffix.lower()}"         # base name + ext
-
-#         entry = by_base.setdefault(key, {})
-#         if is_cleaned:
-#             entry["cleaned"] = f
-#         else:
-#             entry["raw"] = f
-
-#     chosen: list[Path] = []
-#     for key, pair in by_base.items():
-#         chosen.append(pair.get("cleaned") or pair.get("raw"))
-
-#     return sorted(chosen)
-
 def vendor_files(folder: Path) -> list[Path]:
     """
-    Return vendor files to compare, preferring *_cleaned.* when both exist
-    (even if the extensions differ, e.g., test.csv vs test_cleaned.xlsx).
-    Excludes metadata.json, any JeraSoft comparison outputs (raw or cleaned),
-    and any previously generated *_comparision_result.* files.
+    Return vendor files to compare, preferring *_cleaned.* when both exist.
+    Excludes metadata.json and any JeraSoft comparison outputs (raw or cleaned).
     """
     def is_jerasoft(p: Path) -> bool:
         n = p.name.lower()
@@ -648,10 +599,7 @@ def vendor_files(folder: Path) -> list[Path]:
             or n.endswith("_jerasoft_comparison_cleaned.xlsx")
         )
 
-    def is_result_file(p: Path) -> bool:
-        return p.stem.lower().endswith("_comparision_result")
-
-    # collect candidates (non-jerasoft, non-result, allowed exts)
+    # collect candidates
     candidates: list[Path] = []
     for f in sorted(folder.iterdir()):
         if not f.is_file():
@@ -660,28 +608,80 @@ def vendor_files(folder: Path) -> list[Path]:
             continue
         if f.suffix.lower() not in ALLOWED_EXTS:
             continue
-        if is_jerasoft(f) or is_result_file(f):
+        if is_jerasoft(f):
             continue
         candidates.append(f)
 
-    # group by base stem ignoring "_cleaned" and ignoring extension
-    # e.g., "test_csv.csv" and "test_csv_cleaned.xlsx" collapse to "test_csv"
-    groups: dict[str, dict[str, Path]] = {}
+    # prefer *_cleaned over raw twin
+    by_base: dict[str, dict[str, Path]] = {}
     for f in candidates:
         stem = f.stem
-        cleaned = stem.endswith("_cleaned")
-        base = stem[:-8] if cleaned else stem  # remove "_cleaned" if present
+        is_cleaned = stem.endswith("_cleaned")
+        base_stem = stem[:-8] if is_cleaned else stem  # strip "_cleaned"
+        key = f"{base_stem}{f.suffix.lower()}"         # base name + ext
 
-        entry = groups.setdefault(base, {})
-        if cleaned:
+        entry = by_base.setdefault(key, {})
+        if is_cleaned:
             entry["cleaned"] = f
         else:
-            # only keep the first raw we see; cleaned will override anyway
-            entry.setdefault("raw", f)
+            entry["raw"] = f
 
-    # pick cleaned if available, else raw
-    chosen = [(v.get("cleaned") or v.get("raw")) for v in groups.values()]
-    return sorted([p for p in chosen if p is not None])
+    chosen: list[Path] = []
+    for key, pair in by_base.items():
+        chosen.append(pair.get("cleaned") or pair.get("raw"))
+
+    return sorted(chosen)
+
+# def vendor_files(folder: Path) -> list[Path]:
+#     """
+#     Return vendor files to compare, preferring *_cleaned.* when both exist
+#     (even if the extensions differ, e.g., test.csv vs test_cleaned.xlsx).
+#     Excludes metadata.json, any JeraSoft comparison outputs (raw or cleaned),
+#     and any previously generated *_comparision_result.* files.
+#     """
+#     def is_jerasoft(p: Path) -> bool:
+#         n = p.name.lower()
+#         return (
+#             n == "jerasoft_comparison_all.xlsx"
+#             or n == "jerasoft_comparison_all_cleaned.xlsx"
+#             or n.endswith("_jerasoft_comparison.xlsx")
+#             or n.endswith("_jerasoft_comparison_cleaned.xlsx")
+#         )
+
+#     def is_result_file(p: Path) -> bool:
+#         return p.stem.lower().endswith("_comparision_result")
+
+#     # collect candidates (non-jerasoft, non-result, allowed exts)
+#     candidates: list[Path] = []
+#     for f in sorted(folder.iterdir()):
+#         if not f.is_file():
+#             continue
+#         if f.name.lower() == "metadata.json":
+#             continue
+#         if f.suffix.lower() not in ALLOWED_EXTS:
+#             continue
+#         if is_jerasoft(f) or is_result_file(f):
+#             continue
+#         candidates.append(f)
+
+#     # group by base stem ignoring "_cleaned" and ignoring extension
+#     # e.g., "test_csv.csv" and "test_csv_cleaned.xlsx" collapse to "test_csv"
+#     groups: dict[str, dict[str, Path]] = {}
+#     for f in candidates:
+#         stem = f.stem
+#         cleaned = stem.endswith("_cleaned")
+#         base = stem[:-8] if cleaned else stem  # remove "_cleaned" if present
+
+#         entry = groups.setdefault(base, {})
+#         if cleaned:
+#             entry["cleaned"] = f
+#         else:
+#             # only keep the first raw we see; cleaned will override anyway
+#             entry.setdefault("raw", f)
+
+#     # pick cleaned if available, else raw
+#     chosen = [(v.get("cleaned") or v.get("raw")) for v in groups.values()]
+#     return sorted([p for p in chosen if p is not None])
 
 
 def as_of_from_metadata(folder: Path) -> str:
