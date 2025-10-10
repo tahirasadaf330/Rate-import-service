@@ -498,7 +498,13 @@ def clean_preprocessed_folders(attachments_dir: str | Path):
                 files_done += 1
                 print(f"    ✔ cleaned -> {file_path}")
                 # Update metadata with successful cleaning result
-                metadata["preprocessed_results"][file_path.name] = True
+                
+                raw_name = Path(in_path).name
+                clean_name = Path(out_path).name
+                metadata["preprocessed_results"][raw_name] = True
+                metadata["preprocessed_results"][clean_name] = True
+               
+                # metadata["preprocessed_results"][file_path.name] = True
 
                 # NEW: flag tiny outputs for human review
                 try:
@@ -700,6 +706,7 @@ def compare_preprocessed_folders(
 
         # 2) check baseline jerasoft_preprocessed flag
         baseline_name = left_path.name
+        print(f"  - Baseline file: {baseline_name}")
         baseline_ok = bool(preproc_map.get(baseline_name))
         if not baseline_ok:
             print("  ✖ Baseline comparison file exists but was not successfully jerasoft_preprocessed. Skipping folder.")
