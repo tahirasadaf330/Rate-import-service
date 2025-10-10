@@ -1314,6 +1314,129 @@ def compute_upload_stats(dfs: List[pd.DataFrame]) -> Dict[str, int]:
         "billing_increment_changes": bic,
     }
 
+# def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
+#     """
+#     Idempotent push:
+#       - Only create a rate_uploads row if there is at least ONE result file that
+#         has not been pushed yet AND has at least one row to insert.
+#       - Process only files not previously marked as pushed in metadata.json.
+#       - Mark results_pushed[filename] per file with True/False (or a string reason).
+
+#     Returns: (folders_processed, files_processed, rows_inserted_total)
+#     """
+#     root = Path(attachments_root).expanduser().resolve()
+#     if not root.exists():
+#         raise FileNotFoundError(f"Attachments directory not found: {root}")
+
+#     folders_done = 0
+#     files_done = 0
+#     rows_total = 0
+
+#     print("\n=== DB push over OK comparison-result folders ===")
+#     for child in sorted(root.iterdir()):
+#         if not child.is_dir():
+#             continue
+
+#         meta = load_metadata(child)
+#         if not meta or not comparison_result_ok(meta):
+#             continue
+
+#         # Discover result files in this folder
+#         result_files = find_result_files(child)
+#         if not result_files:
+#             continue
+
+#         # Determine which files still need to be pushed (strict idempotency gate)
+#         rp = meta.get("results_pushed") or {}
+#         to_push = [f for f in result_files if rp.get(f.name) is not True]
+#         if not to_push:
+#             # Nothing left to do in this folder
+#             continue
+
+#         # Read only the files we plan to push (stats + pre-check for empties)
+#         dfs_to_push: List[pd.DataFrame] = []
+#         per_file_df: Dict[str, pd.DataFrame] = {}
+#         for f in to_push:
+#             try:
+#                 df_tmp = read_comparison_table(f)
+#                 # Remember the DF even if empty so we can mark status later
+#                 per_file_df[f.name] = df_tmp
+#                 if not df_tmp.empty:
+#                     dfs_to_push.append(df_tmp)
+#             except Exception as e:
+#                 print(f"    ⚠ failed reading {f.name} for stats aggregation: {e}")
+#                 per_file_df[f.name] = pd.DataFrame()  # treat as empty so it won't insert
+
+#         # If every to_push DF is empty, don't create a parent record; just mark files
+#         if not any((not d.empty) for d in per_file_df.values()):
+#             for f in to_push:
+#                 mark_results_pushed(child, f.name, "empty file no results to push to the database")
+#             # Nothing inserted, but we did meaningful work → count folder processed
+#             folders_done += 1
+#             print(f"\n[FOLDER] {child}")
+#             print("  (All to-push files empty → no upload created)")
+#             continue
+
+#         # Aggregate stats from only the DFs that have rows
+#         stats_totals = compute_upload_stats(dfs_to_push)
+
+#         # Ready to create the parent upload row now (idempotent: only when there's work)
+#         folders_done += 1
+#         print(f"\n[FOLDER] {child}")
+
+#         sender = str(meta.get("sender") or "").strip()
+#         subject = (meta.get("subject") or "").strip() or None
+#         received_at = parse_received_at(meta)
+#         processed_at = _parse_iso_utc_safe(meta.get("processed_at_utc"))
+
+#         try:
+#             upload_id = insert_rate_upload(
+#                 sender_email=sender or None,
+#                 subject=subject,
+#                 received_at=received_at,
+#                 processed_at=processed_at,
+#                 totals=stats_totals,
+#             )
+#         except Exception as e:
+#             # Parent failed → mark all to_push files as failed so we don't spin forever
+#             print(f"  ✖ Failed to create rate_upload row: {e}")
+#             for f in to_push:
+#                 mark_results_pushed(child, f.name, False)
+#             continue
+
+#         # Process only files that still need pushing
+#         for f in to_push:
+#             print(f"  - Processing {f.name}")
+#             try:
+#                 df = per_file_df.get(f.name)
+#                 if df is None:
+#                     # Safety: read again if it wasn't cached
+#                     df = read_comparison_table(f)
+
+#                 if df.empty:
+#                     print("    ⚠ empty comparison file; nothing to push")
+#                     mark_results_pushed(child, f.name, "empty file no results to push to the database")
+#                     continue
+
+#                 details = df_to_detail_dicts(df)
+
+#                 # If you have a UNIQUE constraint on details, turn this into an UPSERT there.
+#                 inserted = bulk_insert_rate_upload_details(upload_id, details)
+#                 rows_total += inserted
+#                 files_done += 1
+#                 print(f"    ✔ inserted {inserted} rows")
+#                 mark_results_pushed(child, f.name, True)
+
+#             except Exception as e:
+#                 print(f"    ✖ failed to insert from {f.name}: {e}")
+#                 mark_results_pushed(child, f.name, False)
+
+#     print("\n=== DB push summary ===")
+#     print(f"Folders processed: {folders_done}")
+#     print(f"Files processed:   {files_done}")
+#     print(f"Rows inserted:     {rows_total}")
+#     return folders_done, files_done, rows_total
+
 def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
     """
     Idempotent push:
@@ -1321,8 +1444,7 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
         has not been pushed yet AND has at least one row to insert.
       - Process only files not previously marked as pushed in metadata.json.
       - Mark results_pushed[filename] per file with True/False (or a string reason).
-
-    Returns: (folders_processed, files_processed, rows_inserted_total)
+      - Persist & reuse rate_upload_id to avoid duplicate parent rows.
     """
     root = Path(attachments_root).expanduser().resolve()
     if not root.exists():
@@ -1350,7 +1472,6 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
         rp = meta.get("results_pushed") or {}
         to_push = [f for f in result_files if rp.get(f.name) is not True]
         if not to_push:
-            # Nothing left to do in this folder
             continue
 
         # Read only the files we plan to push (stats + pre-check for empties)
@@ -1359,7 +1480,6 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
         for f in to_push:
             try:
                 df_tmp = read_comparison_table(f)
-                # Remember the DF even if empty so we can mark status later
                 per_file_df[f.name] = df_tmp
                 if not df_tmp.empty:
                     dfs_to_push.append(df_tmp)
@@ -1371,7 +1491,6 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
         if not any((not d.empty) for d in per_file_df.values()):
             for f in to_push:
                 mark_results_pushed(child, f.name, "empty file no results to push to the database")
-            # Nothing inserted, but we did meaningful work → count folder processed
             folders_done += 1
             print(f"\n[FOLDER] {child}")
             print("  (All to-push files empty → no upload created)")
@@ -1380,7 +1499,6 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
         # Aggregate stats from only the DFs that have rows
         stats_totals = compute_upload_stats(dfs_to_push)
 
-        # Ready to create the parent upload row now (idempotent: only when there's work)
         folders_done += 1
         print(f"\n[FOLDER] {child}")
 
@@ -1389,20 +1507,28 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
         received_at = parse_received_at(meta)
         processed_at = _parse_iso_utc_safe(meta.get("processed_at_utc"))
 
-        try:
-            upload_id = insert_rate_upload(
-                sender_email=sender or None,
-                subject=subject,
-                received_at=received_at,
-                processed_at=processed_at,
-                totals=stats_totals,
-            )
-        except Exception as e:
-            # Parent failed → mark all to_push files as failed so we don't spin forever
-            print(f"  ✖ Failed to create rate_upload row: {e}")
-            for f in to_push:
-                mark_results_pushed(child, f.name, False)
-            continue
+        # ── OPTION A: reuse existing rate_upload_id if present ──────────────
+        upload_id = meta.get("rate_upload_id")
+        if upload_id:
+            print(f"  (reusing existing rate_upload_id={upload_id})")
+        else:
+            try:
+                upload_id = insert_rate_upload(
+                    sender_email=sender or None,
+                    subject=subject,
+                    received_at=received_at,
+                    processed_at=processed_at,
+                    totals=stats_totals,
+                )
+                meta["rate_upload_id"] = int(upload_id)
+                save_metadata(child, meta)  # persist so future runs reuse it
+                print(f"  ✔ created rate_upload_id={upload_id} and saved to metadata.json")
+            except Exception as e:
+                print(f"  ✖ Failed to create rate_upload row: {e}")
+                for f in to_push:
+                    mark_results_pushed(child, f.name, False)
+                continue
+        # ────────────────────────────────────────────────────────────────────
 
         # Process only files that still need pushing
         for f in to_push:
@@ -1410,7 +1536,6 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
             try:
                 df = per_file_df.get(f.name)
                 if df is None:
-                    # Safety: read again if it wasn't cached
                     df = read_comparison_table(f)
 
                 if df.empty:
@@ -1419,8 +1544,6 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
                     continue
 
                 details = df_to_detail_dicts(df)
-
-                # If you have a UNIQUE constraint on details, turn this into an UPSERT there.
                 inserted = bulk_insert_rate_upload_details(upload_id, details)
                 rows_total += inserted
                 files_done += 1
@@ -1436,6 +1559,7 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
     print(f"Files processed:   {files_done}")
     print(f"Rows inserted:     {rows_total}")
     return folders_done, files_done, rows_total
+
 
 def finalize_processed_flags(paths_map: Dict[str, Optional[str]]) -> Tuple[int, int, int]:
     """
