@@ -266,8 +266,6 @@ def _raw_from_ws(ws) -> pd.DataFrame:
     raw.reset_index(drop=True, inplace=True)
     return raw.astype("string")
 
-
-
 # ── PATCH 1: make the pandas reader actually try multiple engines & the target sheet ──
 def _raw_from_excel_pandas(path: str, sheet) -> pd.DataFrame:
     """
@@ -932,9 +930,6 @@ def normalize_dates(df: pd.DataFrame, column_name: str, date_format_email: str) 
     df[column_name] = parsed.dt.strftime('%Y-%m-%d')  # final canonical form as string
     return df
 
-
-
-
 def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email: str | None = None) -> pd.DataFrame:
     """
     Robust loader:
@@ -1029,8 +1024,8 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
 
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r'C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-sheet-automation\attachments\Book1.xlsx'
-    OUT_PATH = r'C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-sheet-automation\attachments\Book1_cleaned.xlsx'
+    PATH = r'C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-sheet-automation\attachments\test1.xlsx'
+    OUT_PATH = r'C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-sheet-automation\attachments\test1_cleaned.xlsx'
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
     cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='DD-MM-YYYY')

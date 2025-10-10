@@ -393,6 +393,12 @@ def process_all_directories(attachments_base="attachments"):
 
 ALLOWED_EXTS = {".xlsx", ".xls", ".csv"}
 
+def cleaned_out_path(p: Path) -> Path:
+    """Return <stem>_cleaned<suffix> in the same folder."""
+    p = Path(p)
+    return p.with_name(f"{p.stem}_cleaned{p.suffix}")
+
+
 def iter_preprocessed_dirs_(attachments_root: Path):
     """
     Yield directories under attachments_root whose metadata.json has "jerasoft_preprocessed": true.
@@ -472,8 +478,9 @@ def clean_preprocessed_folders(attachments_dir: str | Path):
             any_files = True
             try:
                 in_path = str(file_path)
-                out_path = str(file_path)   # same path -> overwrite in place
+                out_path = str(cleaned_out_path(file_path))  # same path -> overwrite in place
                 print(f"  - Cleaning: {file_path}")
+                print(f"  -> Output: {out_path}")
                 
                 date_fmt = (metadata.get("date_format_identified") or "").strip() or None
                 fname = file_path.name.lower()
@@ -561,33 +568,63 @@ def iter_preprocessed_dirs(attachments_root: Path) -> Iterable[Path]:
 
 def find_jerasoft_file(folder: Path) -> Optional[Path]:
     """Prefer jerasoft_comparison_all.xlsx, else first *_jerasoft_comparison.xlsx."""
-    prime = folder / "jerasoft_comparison_all.xlsx"
+    prime = folder / "jerasoft_comparison_all_cleaned.xlsx"
     if prime.exists():
         return prime
     candidates = sorted(
         p for p in folder.iterdir()
         if p.is_file()
         and p.suffix.lower() in (".xlsx", ".xls")
-        and p.name.lower().endswith("_jerasoft_comparison.xlsx")
+        and p.name.lower().endswith("_jerasoft_comparison_cleaned.xlsx")
     )
     return candidates[0] if candidates else None
 
 def vendor_files(folder: Path) -> list[Path]:
-    """All candidate files except metadata.json and JeraSoft comparison outputs."""
-    out: list[Path] = []
+    """
+    Return vendor files to compare, preferring *_cleaned.* when both exist.
+    Excludes metadata.json and any JeraSoft comparison outputs (raw or cleaned).
+    """
+    def is_jerasoft(p: Path) -> bool:
+        n = p.name.lower()
+        return (
+            n == "jerasoft_comparison_all.xlsx"
+            or n == "jerasoft_comparison_all_cleaned.xlsx"
+            or n.endswith("_jerasoft_comparison.xlsx")
+            or n.endswith("_jerasoft_comparison_cleaned.xlsx")
+        )
+
+    # collect candidates
+    candidates: list[Path] = []
     for f in sorted(folder.iterdir()):
         if not f.is_file():
             continue
         if f.name.lower() == "metadata.json":
             continue
-        ext = f.suffix.lower()
-        if ext not in ALLOWED_EXTS:
+        if f.suffix.lower() not in ALLOWED_EXTS:
             continue
-        name = f.name.lower()
-        if name == "jerasoft_comparison_all.xlsx" or name.endswith("_jerasoft_comparison.xlsx"):
-            continue  # baseline, not a vendor file
-        out.append(f)
-    return out
+        if is_jerasoft(f):
+            continue
+        candidates.append(f)
+
+    # prefer *_cleaned over raw twin
+    by_base: dict[str, dict[str, Path]] = {}
+    for f in candidates:
+        stem = f.stem
+        is_cleaned = stem.endswith("_cleaned")
+        base_stem = stem[:-8] if is_cleaned else stem  # strip "_cleaned"
+        key = f"{base_stem}{f.suffix.lower()}"         # base name + ext
+
+        entry = by_base.setdefault(key, {})
+        if is_cleaned:
+            entry["cleaned"] = f
+        else:
+            entry["raw"] = f
+
+    chosen: list[Path] = []
+    for key, pair in by_base.items():
+        chosen.append(pair.get("cleaned") or pair.get("raw"))
+
+    return sorted(chosen)
 
 def as_of_from_metadata(folder: Path) -> str:
     """Use metadata.date_utc if available, else today (UTC, YYYY-MM-DD)."""
