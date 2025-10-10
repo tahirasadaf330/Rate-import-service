@@ -234,7 +234,7 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
         upsert_kwargs = {}
         if ext in EXCEL_EXTS and autodetected:
             upsert_kwargs.update({
-                "status": True,
+                "status": "approved",
                 "date_format": "YYYY-MM-DD",
                 "approved_at": datetime.now(timezone.utc),
                 "is_format_auto_detected": True,

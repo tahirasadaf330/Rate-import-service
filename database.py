@@ -491,7 +491,7 @@ def insert_or_update_ingest_file(
     preview_cache: Optional[Dict[str, Any]] = None,
     error_message: Optional[str] = None,
     # new optional fields
-    status: Optional[bool] = None,
+    status: Optional[str] = None,
     date_format: Optional[str] = None,
     approved_at: Optional[datetime] = None,
     is_format_auto_detected: Optional[bool] = None,
@@ -508,7 +508,10 @@ def insert_or_update_ingest_file(
         raise ValueError("file_path is required")
 
     # ---- Defaults so CSVs don't violate NOT NULL ----
-    status = bool(status) if status is not None else False
+    # status = bool(status) if status is not None else False
+
+    status = status if status not in (None, "") else "pending"
+
     is_format_auto_detected = bool(is_format_auto_detected) if is_format_auto_detected is not None else False
     date_format = (date_format or None)
     # approved_at may remain None
