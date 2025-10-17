@@ -497,7 +497,8 @@ def iter_preprocessed_dirs_(attachments_root: Path):
 
         if bool(data.get("jerasoft_preprocessed")) is True:
             results = data.get("preprocessed_results", {})
-            if not results or any(v is False for v in results.values()):
+            # if not results or any(v is False for v in results.values()):
+            if not results:
                 yield child
 
 
@@ -639,11 +640,17 @@ def iter_preprocessed_dirs(attachments_root: Path) -> Iterable[Path]:
             print(f"[SKIP] Awaiting date verification approval: {child}")
             continue
 
+        # if data.get("jerasoft_preprocessed") is True:
+        #     comp = data.get("comparision_result") or {}
+        #     per_vendor = {k: v for k, v in comp.items() if k != "result"}
+        #     # run if no result yet, or any vendor isn’t exactly True
+        #     if not comp or any(v is not True for v in per_vendor.values()):
+        #         yield child
+        
         if data.get("jerasoft_preprocessed") is True:
             comp = data.get("comparision_result") or {}
-            per_vendor = {k: v for k, v in comp.items() if k != "result"}
-            # run if no result yet, or any vendor isn’t exactly True
-            if not comp or any(v is not True for v in per_vendor.values()):
+            # run only if 'result' key is not present
+            if "result" not in comp:
                 yield child
 
 def find_jerasoft_file(folder: Path) -> Optional[Path]:
