@@ -20,9 +20,9 @@ from email_verification import verify_fetch_emails
 import os
 import json
 from pathlib import Path
-from preprocess_data import load_clean_rates, _raw_from_excel_pandas
+from preprocess_data import load_clean_rates
 from typing import Iterable, Tuple, Optional, Dict, Any, List, Mapping
-from database import insert_rate_upload, bulk_insert_rate_upload_details, push_failed_emails_json_to_db, fetch_approved_unprocessed_paths_map, insert_rejected_email_row, insert_or_update_ingest_file, mark_ingest_processed
+from database import insert_rate_upload, bulk_insert_rate_upload_details, push_failed_emails_json_to_db, fetch_approved_unprocessed_paths_map, insert_rejected_email_row, insert_or_update_ingest_file, mark_ingest_processed,upsert_processing_status,mark_processing_stage
 import pandas as pd
 from datetime import date, datetime, timezone
 
@@ -258,12 +258,18 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
             meta["date_verification_ingestion"] = True
 
             # If we auto-detected native dates for Excel, mark folder approved too
+                        # If we auto-detected native dates for Excel, mark folder approved too
             if ext in EXCEL_EXTS and autodetected:
                 meta["date_verification_ingestion_status"] = True
                 meta["date_format_identified"] = "YYYY-MM-DD"
+                try:
+                    mark_processing_stage(directory_name=folder.name, stage="date_format_fetched")
+                except Exception as e:
+                    print(f"[STATUS][WARN] failed to mark date_format_fetched for {folder.name}: {e}")
 
             with meta_path.open("w", encoding="utf-8") as f:
                 json.dump(meta, f, ensure_ascii=False, indent=2)
+
 
         except Exception as db_e:
             print(f"[INGEST][ERR] DB insert failed for {folder.name}: {db_e}")
@@ -271,6 +277,7 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
 
     print(f"[INGEST] summary: scanned={scanned}, inserted={inserted}, skipped={skipped}")
     return (scanned, inserted, skipped)
+
 
 
 def mark_date_verification_ingestion(path_to_format: Mapping[str, Optional[str]]) -> Tuple[int, int, int]:
@@ -326,9 +333,14 @@ def mark_date_verification_ingestion(path_to_format: Mapping[str, Optional[str]]
 
         meta["date_verification_ingestion_status"] = True
         meta["date_format_identified"] = dir_fmt.get(d)
+        try:
+            mark_processing_stage(directory_name=d.name, stage="date_format_fetched")
+        except Exception as e:
+            print(f"[STATUS][WARN] failed to mark date_format_fetched for {d.name}: {e}")
 
         # Atomic-ish write
         tmp = meta_path.with_suffix(meta_path.suffix + ".tmp")
+
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
         os.replace(tmp, meta_path)
@@ -454,9 +466,16 @@ def process_all_directories(attachments_base="attachments"):
                 meta["jerasoft_preprocessed"] = True
                 with open(meta_file, "w", encoding="utf-8") as f:
                     json.dump(meta, f, indent=2)
-                print(f"[INFO] Updated metadata with jerasoft_preprocessed flag/best_table_name: {meta_file}")
 
+                try:
+                    # DB column: is_jera_fetched
+                    mark_processing_stage(directory_name=subdir.name, stage="jera_fetched")
+                except Exception as e:
+                    print(f"[STATUS][WARN] failed to mark jera_fetched for {subdir.name}: {e}")
+
+                print(f"[INFO] Updated metadata with jerasoft_preprocessed flag/best_table_name: {meta_file}")
                 print(f"[SUCCESS] Exported for {company} -> {output_path}")
+
         except Exception as e:
             print(f"[ERROR] Export failed for {company}: {e}")
 
@@ -535,7 +554,6 @@ def clean_preprocessed_folders(attachments_dir: str | Path):
         folders_done += 1
         print(f"\n[FOLDER] {folder}")
 
-        # Load metadata to track file results
         metadata_path = folder / "metadata.json"
         try:
             with metadata_path.open("r", encoding="utf-8") as f:
@@ -544,23 +562,22 @@ def clean_preprocessed_folders(attachments_dir: str | Path):
             print(f"  ✖ Failed to load metadata: {e}")
             continue
 
-        # Initialize preprocessed_results in metadata if not present
         if "preprocessed_results" not in metadata:
             metadata["preprocessed_results"] = {}
-
         any_files = False
+
         for file_path in files_to_clean(folder):
             any_files = True
             try:
                 in_path = str(file_path)
-                out_path = str(cleaned_out_path(file_path))  # same path -> overwrite in place
+                out_path = str(cleaned_out_path(file_path))
                 print(f"  - Cleaning: {file_path}")
                 print(f"  -> Output: {out_path}")
-                
+
                 date_fmt = (metadata.get("date_format_identified") or "").strip() or None
                 fname = file_path.name.lower()
 
-                # If this is a JeraSoft output, force ISO dates
+                # Force ISO dates for JeraSoft outputs
                 if "jerasoft_comparison_all" in fname or "jerasoft_comparison" in fname:
                     date_fmt_to_use = "YYYY-MM-DD"
                 else:
@@ -572,33 +589,32 @@ def clean_preprocessed_folders(attachments_dir: str | Path):
 
                 files_done += 1
                 print(f"    ✔ cleaned -> {file_path}")
-                # Update metadata with successful cleaning result
 
                 raw_name = Path(in_path).name
                 clean_name = Path(out_path).name
                 metadata["preprocessed_results"][raw_name] = True
                 metadata["preprocessed_results"][clean_name] = True
-               
-                # metadata["preprocessed_results"][file_path.name] = True
 
-                # NEW: flag tiny outputs for human review
+                # Optional: capture small-output hint for human eval
                 try:
-                    row_count = int(cleaned_df.shape[0])
+                    row_count = int(getattr(cleaned_df, "shape", [0])[0])
                 except Exception:
-                    row_count = 0  # be safe if something odd is returned
-
-                # keep a per-file detail (handy for debugging)
-                metadata.setdefault("human_eval_details_pre", {})[file_path.name] = {"rows": row_count}
-
-                # set a top-level flag; never turn a prior True back to False
+                    row_count = 0
+                metadata.setdefault("human_eval_details_pre", {})[raw_name] = {"rows": row_count}
                 metadata["need_human_eval_pre"] = bool(metadata.get("need_human_eval_pre")) or (row_count < 100)
 
             except Exception as e:
                 print(f"    ✖ failed cleaning {file_path.name}: {e}")
-                # Update metadata with failure result
                 metadata["preprocessed_results"][file_path.name] = False
 
-        # Save the updated metadata back to the file
+        # mark stage if any file cleaned successfully in this folder
+        try:
+            if any(v is True for v in (metadata.get("preprocessed_results") or {}).values()):
+                mark_processing_stage(directory_name=folder.name, stage="file_cleaned")
+        except Exception as e:
+            print(f"[STATUS][WARN] failed to mark file_cleaned for {folder.name}: {e}")
+
+        # Save the updated metadata once per folder
         try:
             with metadata_path.open("w", encoding="utf-8") as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=4)
@@ -913,13 +929,13 @@ def compare_preprocessed_folders(
 
         # 6) persist comparision_result
         # if at least one vendor processed, include a simple outcome line
+        # 6) persist comparision_result
         if comp_result:
             success_any = any(comp_result.values())
             if success_any:
                 meta["comparision_result"] = {"result": "ok", **comp_result}
             else:
                 meta["comparision_result"] = {"result": "no comparisons succeeded", **comp_result}
-
             meta["processed_at_utc"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         else:
             meta["comparision_result"] = {"result": "no eligible vendor files"}
@@ -929,6 +945,12 @@ def compare_preprocessed_folders(
             _write_metadata(folder, meta)
         except Exception as e:
             print(f"  ⚠ failed updating metadata: {e}")
+
+        # mark stage once comparison phase finished for this folder
+        try:
+            mark_processing_stage(directory_name=folder.name, stage="rate_compared")
+        except Exception as e:
+            print(f"[STATUS][WARN] failed to mark rate_compared for {folder.name}: {e}")
 
     print("\n=== Comparison summary ===")
     print(f"Folders processed:     {folders_done}")
@@ -1233,9 +1255,9 @@ def read_comparison_table(path: Path) -> pd.DataFrame:
 def df_to_detail_dicts(df: pd.DataFrame) -> List[Dict[str, Any]]:
     details: List[Dict[str, Any]] = []
 
-    has_old_bi   = "Old Billing Increment" in df.columns
-    has_new_bi   = "New Billing Increment" in df.columns
-    has_code_name = "Dst Code Name" in df.columns
+    has_old_bi    = "Old Billing Increment" in df.columns
+    has_new_bi    = "New Billing Increment" in df.columns
+    has_code_name = "Code Name" in df.columns  # <-- align with rename
 
     for _, r in df.iterrows():
         eff = r["Effective Date"]
@@ -1251,7 +1273,6 @@ def df_to_detail_dicts(df: pd.DataFrame) -> List[Dict[str, Any]]:
             "notes": None if pd.isna(r["Notes"]) else str(r["Notes"]).strip(),
         }
 
-        # Optional extras (only if present)
         if has_old_bi:
             v = r.get("Old Billing Increment")
             item["old_billing_increment"] = None if pd.isna(v) else str(v).strip()
@@ -1259,7 +1280,7 @@ def df_to_detail_dicts(df: pd.DataFrame) -> List[Dict[str, Any]]:
             v = r.get("New Billing Increment")
             item["new_billing_increment"] = None if pd.isna(v) else str(v).strip()
         if has_code_name:
-            v = r.get("Dst Code Name")
+            v = r.get("Code Name")
             item["code_name"] = None if pd.isna(v) else str(v).strip()
 
         details.append(item)
@@ -1443,16 +1464,7 @@ def compute_upload_stats(dfs: List[pd.DataFrame]) -> Dict[str, int]:
 #     print(f"Files processed:   {files_done}")
 #     print(f"Rows inserted:     {rows_total}")
 #     return folders_done, files_done, rows_total
-
 def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
-    """
-    Idempotent push:
-      - Only create a rate_uploads row if there is at least ONE result file that
-        has not been pushed yet AND has at least one row to insert.
-      - Process only files not previously marked as pushed in metadata.json.
-      - Mark results_pushed[filename] per file with True/False (or a string reason).
-      - Persist & reuse rate_upload_id to avoid duplicate parent rows.
-    """
     root = Path(attachments_root).expanduser().resolve()
     if not root.exists():
         raise FileNotFoundError(f"Attachments directory not found: {root}")
@@ -1470,18 +1482,15 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
         if not meta or not comparison_result_ok(meta):
             continue
 
-        # Discover result files in this folder
         result_files = find_result_files(child)
         if not result_files:
             continue
 
-        # Determine which files still need to be pushed (strict idempotency gate)
         rp = meta.get("results_pushed") or {}
         to_push = [f for f in result_files if rp.get(f.name) is not True]
         if not to_push:
             continue
 
-        # Read only the files we plan to push (stats + pre-check for empties)
         dfs_to_push: List[pd.DataFrame] = []
         per_file_df: Dict[str, pd.DataFrame] = {}
         for f in to_push:
@@ -1492,18 +1501,17 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
                     dfs_to_push.append(df_tmp)
             except Exception as e:
                 print(f"    ⚠ failed reading {f.name} for stats aggregation: {e}")
-                per_file_df[f.name] = pd.DataFrame()  # treat as empty so it won't insert
+                per_file_df[f.name] = pd.DataFrame()
 
-        # If every to_push DF is empty, don't create a parent record; just mark files
         if not any((not d.empty) for d in per_file_df.values()):
             for f in to_push:
                 mark_results_pushed(child, f.name, "empty file no results to push to the database")
             folders_done += 1
             print(f"\n[FOLDER] {child}")
             print("  (All to-push files empty → no upload created)")
+            # Note: do NOT mark rate_uploaded here—nothing was uploaded.
             continue
 
-        # Aggregate stats from only the DFs that have rows
         stats_totals = compute_upload_stats(dfs_to_push)
 
         folders_done += 1
@@ -1514,7 +1522,6 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
         received_at = parse_received_at(meta)
         processed_at = _parse_iso_utc_safe(meta.get("processed_at_utc"))
 
-        # ── OPTION A: reuse existing rate_upload_id if present ──────────────
         upload_id = meta.get("rate_upload_id")
         if upload_id:
             print(f"  (reusing existing rate_upload_id={upload_id})")
@@ -1528,25 +1535,24 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
                     totals=stats_totals,
                 )
                 meta["rate_upload_id"] = int(upload_id)
-                save_metadata(child, meta)  # persist so future runs reuse it
+                save_metadata(child, meta)
                 print(f"  ✔ created rate_upload_id={upload_id} and saved to metadata.json")
             except Exception as e:
                 print(f"  ✖ Failed to create rate_upload row: {e}")
                 for f in to_push:
                     mark_results_pushed(child, f.name, False)
                 continue
-        # ────────────────────────────────────────────────────────────────────
 
-        # Process only files that still need pushing
+        # push each file’s rows
+        pushed_any_this_folder = False
         for f in to_push:
             print(f"  - Processing {f.name}")
             try:
-                df = per_file_df.get(f.name)
+                df = per_file_df.get(f.name) 
                 if df is None:
                     df = read_comparison_table(f)
-
-                if df.empty:
-                    print("    ⚠ empty comparison file; nothing to push")
+                    if df.empty:
+                     print("    ⚠ empty comparison file; nothing to push")
                     mark_results_pushed(child, f.name, "empty file no results to push to the database")
                     continue
 
@@ -1556,16 +1562,29 @@ def push_all_ok_results(attachments_root: str | Path) -> Tuple[int, int, int]:
                 files_done += 1
                 print(f"    ✔ inserted {inserted} rows")
                 mark_results_pushed(child, f.name, True)
+                pushed_any_this_folder = True
 
             except Exception as e:
                 print(f"    ✖ failed to insert from {f.name}: {e}")
                 mark_results_pushed(child, f.name, False)
+
+        # After file loop, mark rate_uploaded if any file was pushed True
+        if pushed_any_this_folder:
+            try:
+                 mark_processing_stage(
+            directory_name=child.name,
+            stage="rate_uploaded",
+            final_status=True
+        )
+            except Exception as e:
+                print(f"[STATUS][WARN] failed to mark rate_uploaded for {child.name}: {e}")
 
     print("\n=== DB push summary ===")
     print(f"Folders processed: {folders_done}")
     print(f"Files processed:   {files_done}")
     print(f"Rows inserted:     {rows_total}")
     return folders_done, files_done, rows_total
+
 
 
 def finalize_processed_flags(paths_map: Dict[str, Optional[str]]) -> Tuple[int, int, int]:
@@ -1630,6 +1649,78 @@ def finalize_processed_flags(paths_map: Dict[str, Optional[str]]) -> Tuple[int, 
     print(f"[INGEST] finalize_processed_flags summary: dirs_scanned={dirs_scanned}, "
           f"eligible_dirs={eligible_dirs}, rows_marked={rows_marked}")
     return dirs_scanned, eligible_dirs, rows_marked
+#____________________________________________________
+def seed_processing_status_rows(attachments_root: str | Path = "attachments") -> tuple[int, int, int]:
+    """
+    Walk attachments/*, read metadata.json, and ensure a processing_statuses row exists.
+    Returns (folders_scanned, rows_upserted, missing_or_invalid_meta).
+    """
+    root = Path(attachments_root).expanduser().resolve()
+    if not root.exists():
+        print(f"[STATUS] attachments root not found: {root}")
+        return (0, 0, 0)
+
+    scanned = 0
+    upserts = 0
+    bad = 0
+
+    for d in sorted(root.iterdir()):
+        if not d.is_dir():
+            continue
+        scanned += 1
+        meta_path = d / "metadata.json"
+        if not meta_path.exists():
+            bad += 1
+            continue
+        try:
+            with meta_path.open("r", encoding="utf-8") as f:
+                meta = json.load(f) or {}
+        except Exception as e:
+            print(f"[STATUS][WARN] failed reading {meta_path}: {e}")
+            bad += 1
+            continue
+
+        # derive fields safely
+        try:
+            internet_message_id = str(
+                meta.get("internet_message_id")
+                or meta.get("internetMessageId")
+                or meta.get("message_id")
+                or ""
+            ).strip() or None
+
+            directory_name = (Path(meta.get("directory") or d).name)
+
+            sender_email = (meta.get("sender") or None)
+            email_subject = (meta.get("subject") or None)
+
+            # reuse your helper for ISO strings; fallback to None on error
+            try:
+                email_received_at = _parse_iso_utc_dt(meta.get("receivedDateTime_raw"))
+            except Exception:
+                email_received_at = None
+
+            if not internet_message_id:
+                # it's OK if you don't have it yet; we can still create the row keyed by message id later.
+                # For now, skip if there is no message-id to keep your UNIQUE(internet_message_id) constraint happy.
+                print(f"[STATUS] skip {d.name}: no internet_message_id in metadata yet")
+                continue
+
+            _id = upsert_processing_status(
+                internet_message_id=internet_message_id,
+                directory_name=directory_name,
+                sender_email=sender_email,
+                email_subject=email_subject,
+                email_received_at=email_received_at,
+            )
+            upserts += 1
+            print(f"[STATUS] ensured processing_statuses id={_id} for {d.name}")
+        except Exception as e:
+            print(f"[STATUS][ERR] upsert failed for {d.name}: {e}")
+            bad += 1
+
+    print(f"[STATUS] seed summary: scanned={scanned}, upserted={upserts}, bad={bad}")
+    return scanned, upserts, bad
 
 #______________________________________________________________________________
 
@@ -1637,6 +1728,7 @@ def finalize_processed_flags(paths_map: Dict[str, Optional[str]]) -> Tuple[int, 
 if __name__ == "__main__":
     # scrap all the valid emails
     verify_fetch_emails(after, before, unread_only)
+    seed_processing_status_rows("attachments")
 
     #________________________________________________
     # run the ingestion pass before any further processing

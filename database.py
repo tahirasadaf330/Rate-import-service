@@ -700,3 +700,199 @@ def mark_ingest_processed(file_paths: Iterable[str], processed: bool = True) -> 
         updated = cur.rowcount
         conn.commit()
     return updated
+from typing import Literal
+
+ProcessingStage = Literal[
+    "date_format_fetched",
+    "jera_fetched",
+    "file_cleaned",
+    "rate_compared",
+    "rate_uploaded",
+]
+
+def upsert_processing_status(
+    *,
+    internet_message_id: str,
+    directory_name: str,
+    sender_email: Optional[str] = None,
+    email_subject: Optional[str] = None,
+    email_received_at: Optional[datetime] = None,
+) -> int:
+    """
+    Create or update a processing_statuses row keyed by internet_message_id.
+    Also enforces directory_name uniqueness. Safe to call many times.
+    Returns the row id.
+    """
+    if not internet_message_id or not directory_name:
+        raise ValueError("internet_message_id and directory_name are required")
+
+    sql = """
+    INSERT INTO processing_statuses (
+        internet_message_id, directory_name, sender_email, email_subject, email_received_at,
+        created_at, updated_at
+    ) VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+    ON CONFLICT (internet_message_id) DO UPDATE SET
+        directory_name    = EXCLUDED.directory_name,
+        sender_email      = COALESCE(EXCLUDED.sender_email, processing_statuses.sender_email),
+        email_subject     = COALESCE(EXCLUDED.email_subject, processing_statuses.email_subject),
+        email_received_at = COALESCE(EXCLUDED.email_received_at, processing_statuses.email_received_at),
+        updated_at        = NOW()
+    RETURNING id;
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            sql,
+            (internet_message_id, directory_name, sender_email, email_subject, email_received_at),
+        )
+        rid = cur.fetchone()[0]
+        conn.commit()
+        return rid
+
+
+def ensure_row_by_directory(
+    *,
+    directory_name: str,
+    internet_message_id: Optional[str] = None,
+    sender_email: Optional[str] = None,
+    email_subject: Optional[str] = None,
+    email_received_at: Optional[datetime] = None,
+) -> int:
+    """
+    Idempotent ensure by directory_name (handy when you don't yet know the message-id).
+    If the row exists (by directory_name), optionally fills missing fields once.
+    If it doesn't exist, requires internet_message_id to insert.
+    Returns id.
+    """
+    if not directory_name:
+        raise ValueError("directory_name is required")
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM processing_statuses WHERE directory_name = %s",
+            (directory_name,),
+        )
+        row = cur.fetchone()
+        if row:
+            rid = row[0]
+            # backfill missing fields once
+            cur.execute(
+                """
+                UPDATE processing_statuses
+                   SET internet_message_id = COALESCE(%s, internet_message_id),
+                       sender_email        = COALESCE(%s, sender_email),
+                       email_subject       = COALESCE(%s, email_subject),
+                       email_received_at   = COALESCE(%s, email_received_at),
+                       updated_at          = NOW()
+                 WHERE id = %s
+                """,
+                (internet_message_id, sender_email, email_subject, email_received_at, rid),
+            )
+            conn.commit()
+            return rid
+
+        if not internet_message_id:
+            raise ValueError("internet_message_id is required for first insert")
+        # insert new
+        cur.execute(
+            """
+            INSERT INTO processing_statuses
+              (internet_message_id, directory_name, sender_email, email_subject, email_received_at,
+               created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+            RETURNING id
+            """,
+            (internet_message_id, directory_name, sender_email, email_subject, email_received_at),
+        )
+        rid = cur.fetchone()[0]
+        conn.commit()
+        return rid
+
+
+def mark_processing_stage(
+    *,
+    directory_name: Optional[str] = None,
+    internet_message_id: Optional[str] = None,
+    stage: ProcessingStage,
+    final_status: Optional[bool] = None,
+) -> int:
+    """
+    Atomically flips a stage boolean to TRUE (one time) and optionally sets the overall 'status'.
+    Returns affected row count (0 if not found).
+      stage options:
+        - "date_format_fetched" -> is_date_format_fetched
+        - "jera_fetched"        -> is_jera_fetched
+        - "file_cleaned"        -> is_file_cleaned
+        - "rate_compared"       -> is_rate_compared
+        - "rate_uploaded"       -> is_rate_uploaded
+    Match by directory_name OR internet_message_id.
+    """
+    if not directory_name and not internet_message_id:
+        raise ValueError("provide directory_name or internet_message_id")
+
+    col_map = {
+        "date_format_fetched": "is_date_format_fetched",
+        "jera_fetched":        "is_jera_fetched",
+        "file_cleaned":        "is_file_cleaned",
+        "rate_compared":       "is_rate_compared",
+        "rate_uploaded":       "is_rate_uploaded",
+    }
+    col = col_map[stage]
+
+    # Build WHERE
+    if directory_name:
+        where = ("directory_name = %s", (directory_name,))
+    else:
+        where = ("internet_message_id = %s", (internet_message_id,))
+
+    # Build UPDATE
+    set_bits = [f"{col} = TRUE", "updated_at = NOW()"]
+    params = list(where[1])
+
+    if final_status is not None:
+        set_bits.append("status = %s")
+        params.insert(0, final_status)  # will adjust below
+
+    set_clause = ", ".join(set_bits)
+
+    # if final_status provided, parameters order is (final_status, key)
+    sql = f"UPDATE processing_statuses SET {set_clause} WHERE {where[0]}"
+
+    with get_conn() as conn, conn.cursor() as cur:
+        if final_status is not None:
+            cur.execute(sql, (final_status, *where[1]))
+        else:
+            cur.execute(sql, where[1])
+        affected = cur.rowcount
+        conn.commit()
+        return affected
+
+
+def get_processing_status(
+    *, directory_name: Optional[str] = None, internet_message_id: Optional[str] = None
+) -> Optional[dict]:
+    """
+    Fetch a processing_statuses row for inspection.
+    """
+    if not directory_name and not internet_message_id:
+        raise ValueError("provide directory_name or internet_message_id")
+
+    where = ("directory_name = %s", (directory_name,)) if directory_name else ("internet_message_id = %s", (internet_message_id,))
+    sql = f"""
+    SELECT id, internet_message_id, directory_name, sender_email, email_subject, email_received_at,
+           is_date_format_fetched, is_jera_fetched, is_file_cleaned, is_rate_compared, is_rate_uploaded, status,
+           created_at, updated_at
+      FROM processing_statuses
+     WHERE {where[0]}
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, where[1])
+        row = cur.fetchone()
+        if not row:
+            return None
+        keys = [
+            "id","internet_message_id","directory_name","sender_email","email_subject","email_received_at",
+            "is_date_format_fetched","is_jera_fetched","is_file_cleaned","is_rate_compared","is_rate_uploaded","status",
+            "created_at","updated_at",
+        ]
+        return dict(zip(keys, row))
