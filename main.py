@@ -1650,6 +1650,30 @@ def finalize_processed_flags(paths_map: Dict[str, Optional[str]]) -> Tuple[int, 
           f"eligible_dirs={eligible_dirs}, rows_marked={rows_marked}")
     return dirs_scanned, eligible_dirs, rows_marked
 #____________________________________________________
+from datetime import date, datetime
+
+def _folder_is_today_or_newer(meta: dict) -> bool:
+    """
+    Return True if the email's received date in metadata is today or newer.
+    Falls back to date_utc if receivedDateTime_raw is missing.
+    If both are missing/unparseable, we allow (return True).
+    """
+    raw = (meta.get("receivedDateTime_raw") or "").strip()
+    if raw:
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).date() >= date.today()
+        except Exception:
+            pass
+    ds = (meta.get("date_utc") or "").strip()
+    if len(ds) == 10:
+        try:
+            return datetime.fromisoformat(ds).date() >= date.today()
+        except Exception:
+            pass
+    # If we can't tell, allow it (so we don't accidentally skip new data)
+    return True
+
+
 def seed_processing_status_rows(attachments_root: str | Path = "attachments") -> tuple[int, int, int]:
     """
     Walk attachments/*, read metadata.json, and ensure a processing_statuses row exists.
@@ -1672,9 +1696,16 @@ def seed_processing_status_rows(attachments_root: str | Path = "attachments") ->
         if not meta_path.exists():
             bad += 1
             continue
+
         try:
             with meta_path.open("r", encoding="utf-8") as f:
                 meta = json.load(f) or {}
+
+            # ⬇️ filter out folders older than today
+            if not _folder_is_today_or_newer(meta):
+                print(f"[STATUS] skip {d.name}: older than today")
+                continue
+
         except Exception as e:
             print(f"[STATUS][WARN] failed reading {meta_path}: {e}")
             bad += 1
@@ -1715,12 +1746,14 @@ def seed_processing_status_rows(attachments_root: str | Path = "attachments") ->
             )
             upserts += 1
             print(f"[STATUS] ensured processing_statuses id={_id} for {d.name}")
+
         except Exception as e:
             print(f"[STATUS][ERR] upsert failed for {d.name}: {e}")
             bad += 1
 
     print(f"[STATUS] seed summary: scanned={scanned}, upserted={upserts}, bad={bad}")
     return scanned, upserts, bad
+
 
 #______________________________________________________________________________
 
