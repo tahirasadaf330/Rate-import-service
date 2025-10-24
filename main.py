@@ -14,6 +14,7 @@ then read that meta data file and create all the comparision files using jerasof
 
 then preprocess all the files 
 """
+from multithreading import run_pipeline_mt
 from jerasoft import export_rates_by_query
 from ratesheet_comparision_engine import read_table, compare, write_excel
 from email_verification import verify_fetch_emails
@@ -1773,21 +1774,23 @@ if __name__ == "__main__":
     #________________________________________________
 
 
-    # fetch jerasoft rates
-    process_all_directories()
+    # # fetch jerasoft rates
+    # process_all_directories()
 
-    # preprocessing the files
-    clean_preprocessed_folders("attachments")
+    # # preprocessing the files
+    # clean_preprocessed_folders("attachments")
 
-    # running comparision engine on all the files
-    compare_preprocessed_folders("attachments", notice_days=7, rate_tol=0.0001)  #check the difference upto 4 decimal places.
+    # # running comparision engine on all the files
+    # compare_preprocessed_folders("attachments", notice_days=7, rate_tol=0.0001)  #check the difference upto 4 decimal places.
 
-    # pushing all the relevant details to the data base
-    push_rejections_from_metadata("attachments")
+    # # pushing all the relevant details to the data base
+    # push_rejections_from_metadata("attachments")
 
-    push_all_ok_results(ATTACHMENTS_ROOT)
+    # push_all_ok_results(ATTACHMENTS_ROOT)
 
     push_failed_emails_json_to_db("failed_emails.json")  
+    
+    run_pipeline_mt("attachments", max_workers=3)
 
 
     #___________________________________________________________
