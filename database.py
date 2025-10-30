@@ -837,20 +837,16 @@ def mark_processing_stage(
     final_status: Optional[bool] = None,
 ) -> int:
     """
-    Step-by-step gating:
-
-    - final_status is True  or None  => try to set current stage TRUE
-      BUT ONLY if all previous stages are TRUE (gated by WHERE).
-      (If final_status is True, we also set overall status TRUE.)
-    - final_status is False          => set current stage FALSE and overall status FALSE.
-      (No gating — you can record a failure anytime.)
-
-    Returns the number of rows updated (0 means prereqs not met or row not found).
+    Status rules:
+      - Any stage set to FALSE  -> status='fail'   (no prereq gating)
+      - Any stage set to TRUE (but not rate_uploaded) -> status='processing'
+      - rate_uploaded set to TRUE -> status='success'
     """
     if not directory_name and not internet_message_id:
         raise ValueError("provide directory_name or internet_message_id")
 
     col = COL_MAP[stage]
+    is_final_stage = (stage == "rate_uploaded")
 
     # Key WHERE
     if directory_name:
@@ -860,26 +856,32 @@ def mark_processing_stage(
 
     set_bits = ["updated_at = NOW()"]
 
+    # ---- Immediate failure (no gating) ----
     if final_status is False:
-        # Record failure immediately; block pipeline via overall status
-        set_bits += [f"{col} = FALSE", "status = FALSE"]
-        where_sql = where_key_sql  # no prereq gating on failure
-        sql = f"UPDATE processing_statuses SET {', '.join(set_bits)} WHERE {where_sql}"
+        set_bits += [f"{col} = FALSE", "status = 'fail'"]
+        sql = f"UPDATE processing_statuses SET {', '.join(set_bits)} WHERE {where_key_sql}"
         with get_conn() as conn, conn.cursor() as cur:
             cur.execute(sql, where_key_args)
             affected = cur.rowcount
             conn.commit()
             return affected
 
-    # Success/advance (True) or “advance without verdict” (None) both require prereqs TRUE
+    # ---- Advance (requires prereqs TRUE) ----
     prereq_cols = _prereq_cols_for(stage)
     prereq_sql = " AND ".join(f"{c} = TRUE" for c in prereq_cols) if prereq_cols else ""
     where_sql = where_key_sql + (f" AND {prereq_sql}" if prereq_sql else "")
 
     set_bits.append(f"{col} = TRUE")
-    if final_status is True:
-        # If you don't want to set overall status on success, delete this line
-        set_bits.append("status = TRUE")
+
+    if is_final_stage:
+        # Only when the final stage is marked TRUE do we mark success
+        set_bits.append("status = 'success'")
+    else:
+        # While progressing through earlier stages, show 'processing'
+        # but don't overwrite a terminal state if it's already there.
+        set_bits.append(
+            "status = CASE WHEN status IN ('fail','success') THEN status ELSE 'processing' END"
+        )
 
     sql = f"UPDATE processing_statuses SET {', '.join(set_bits)} WHERE {where_sql}"
     with get_conn() as conn, conn.cursor() as cur:
@@ -887,6 +889,8 @@ def mark_processing_stage(
         affected = cur.rowcount
         conn.commit()
         return affected
+
+
 
 
 def get_processing_status(
