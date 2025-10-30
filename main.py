@@ -1236,7 +1236,7 @@ def read_comparison_table(path: Path) -> pd.DataFrame:
         elif n == "notes": rename_map[c] = "Notes"
         elif n == "old billing increment": rename_map[c] = "Old Billing Increment"
         elif n == "new billing increment": rename_map[c] = "New Billing Increment"
-        elif n == "code name": rename_map[c] = "Code Name"
+        elif n == "code name": rename_map[c] = "Dst Code Name"
     df = df.rename(columns=rename_map)
 
     # ensure required columns exist
@@ -1258,7 +1258,7 @@ def df_to_detail_dicts(df: pd.DataFrame) -> List[Dict[str, Any]]:
 
     has_old_bi    = "Old Billing Increment" in df.columns
     has_new_bi    = "New Billing Increment" in df.columns
-    has_code_name = "Code Name" in df.columns  # <-- align with rename
+    has_code_name = "Dst Code Name" in df.columns  # <-- align with rename
 
     for _, r in df.iterrows():
         eff = r["Effective Date"]
@@ -1281,7 +1281,7 @@ def df_to_detail_dicts(df: pd.DataFrame) -> List[Dict[str, Any]]:
             v = r.get("New Billing Increment")
             item["new_billing_increment"] = None if pd.isna(v) else str(v).strip()
         if has_code_name:
-            v = r.get("Code Name")
+            v = r.get(" Dst Code Name")
             item["code_name"] = None if pd.isna(v) else str(v).strip()
 
         details.append(item)
