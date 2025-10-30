@@ -709,6 +709,26 @@ ProcessingStage = Literal[
     "rate_compared",
     "rate_uploaded",
 ]
+# --- stage gating helpers ---
+STAGE_ORDER: list[ProcessingStage] = [
+    "date_format_fetched",
+    "jera_fetched",
+    "file_cleaned",
+    "rate_compared",
+    "rate_uploaded",
+]
+
+COL_MAP = {
+    "date_format_fetched": "is_date_format_fetched",
+    "jera_fetched":        "is_jera_fetched",
+    "file_cleaned":        "is_file_cleaned",
+    "rate_compared":       "is_rate_compared",
+    "rate_uploaded":       "is_rate_uploaded",
+}
+
+def _prereq_cols_for(stage: ProcessingStage) -> list[str]:
+    idx = STAGE_ORDER.index(stage)
+    return [COL_MAP[s] for s in STAGE_ORDER[:idx]]
 
 def upsert_processing_status(
     *,
@@ -817,52 +837,53 @@ def mark_processing_stage(
     final_status: Optional[bool] = None,
 ) -> int:
     """
-    Atomically flips a stage boolean to TRUE (one time) and optionally sets the overall 'status'.
-    Returns affected row count (0 if not found).
-      stage options:
-        - "date_format_fetched" -> is_date_format_fetched
-        - "jera_fetched"        -> is_jera_fetched
-        - "file_cleaned"        -> is_file_cleaned
-        - "rate_compared"       -> is_rate_compared
-        - "rate_uploaded"       -> is_rate_uploaded
-    Match by directory_name OR internet_message_id.
+    Step-by-step gating:
+
+    - final_status is True  or None  => try to set current stage TRUE
+      BUT ONLY if all previous stages are TRUE (gated by WHERE).
+      (If final_status is True, we also set overall status TRUE.)
+    - final_status is False          => set current stage FALSE and overall status FALSE.
+      (No gating — you can record a failure anytime.)
+
+    Returns the number of rows updated (0 means prereqs not met or row not found).
     """
     if not directory_name and not internet_message_id:
         raise ValueError("provide directory_name or internet_message_id")
 
-    col_map = {
-        "date_format_fetched": "is_date_format_fetched",
-        "jera_fetched":        "is_jera_fetched",
-        "file_cleaned":        "is_file_cleaned",
-        "rate_compared":       "is_rate_compared",
-        "rate_uploaded":       "is_rate_uploaded",
-    }
-    col = col_map[stage]
+    col = COL_MAP[stage]
 
-    # Build WHERE
+    # Key WHERE
     if directory_name:
-        where = ("directory_name = %s", (directory_name,))
+        where_key_sql, where_key_args = "directory_name = %s", (directory_name,)
     else:
-        where = ("internet_message_id = %s", (internet_message_id,))
+        where_key_sql, where_key_args = "internet_message_id = %s", (internet_message_id,)
 
-    # Build UPDATE
-    set_bits = [f"{col} = TRUE", "updated_at = NOW()"]
-    params = list(where[1])
+    set_bits = ["updated_at = NOW()"]
 
-    if final_status is not None:
-        set_bits.append("status = %s")
-        params.insert(0, final_status)  # will adjust below
+    if final_status is False:
+        # Record failure immediately; block pipeline via overall status
+        set_bits += [f"{col} = FALSE", "status = FALSE"]
+        where_sql = where_key_sql  # no prereq gating on failure
+        sql = f"UPDATE processing_statuses SET {', '.join(set_bits)} WHERE {where_sql}"
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, where_key_args)
+            affected = cur.rowcount
+            conn.commit()
+            return affected
 
-    set_clause = ", ".join(set_bits)
+    # Success/advance (True) or “advance without verdict” (None) both require prereqs TRUE
+    prereq_cols = _prereq_cols_for(stage)
+    prereq_sql = " AND ".join(f"{c} = TRUE" for c in prereq_cols) if prereq_cols else ""
+    where_sql = where_key_sql + (f" AND {prereq_sql}" if prereq_sql else "")
 
-    # if final_status provided, parameters order is (final_status, key)
-    sql = f"UPDATE processing_statuses SET {set_clause} WHERE {where[0]}"
+    set_bits.append(f"{col} = TRUE")
+    if final_status is True:
+        # If you don't want to set overall status on success, delete this line
+        set_bits.append("status = TRUE")
 
+    sql = f"UPDATE processing_statuses SET {', '.join(set_bits)} WHERE {where_sql}"
     with get_conn() as conn, conn.cursor() as cur:
-        if final_status is not None:
-            cur.execute(sql, (final_status, *where[1]))
-        else:
-            cur.execute(sql, where[1])
+        cur.execute(sql, where_key_args)
         affected = cur.rowcount
         conn.commit()
         return affected

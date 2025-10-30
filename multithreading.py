@@ -117,7 +117,8 @@ def _read_comparison_table(path: Path) -> pd.DataFrame:
         elif n == "notes": rename_map[c] = "Notes"
         elif n == "old billing increment": rename_map[c] = "Old Billing Increment"
         elif n == "new billing increment": rename_map[c] = "New Billing Increment"
-        elif n == "code name": rename_map[c] = "Code Name"
+        elif n == "code name": rename_map[c] = "Code Name"      # ← add this
+        elif n == "dst code name": rename_map[c] = "Code Name"
     df = df.rename(columns=rename_map)
 
     missing = [c for c in EXPECTED_COLS if c not in df.columns]
@@ -136,11 +137,12 @@ def _df_to_details(df: pd.DataFrame) -> List[Dict[str, Any]]:
     details: List[Dict[str, Any]] = []
     has_old_bi    = "Old Billing Increment" in df.columns
     has_new_bi    = "New Billing Increment" in df.columns
-    has_code_name = "Code Name" in df.columns
+    # this variable holds the actual column name to read
+    code_name_col = "Code Name" if "Code Name" in df.columns else ("Dst Code Name" if "Dst Code Name" in df.columns else None)
 
     for _, r in df.iterrows():
         eff = r["Effective Date"]
-        eff_py = None if pd.isna(eff) else eff.to_pydatetime()  # tz-aware UTC
+        eff_py = None if pd.isna(eff) else eff.to_pydatetime()
         item: Dict[str, Any] = {
             "dst_code": None if pd.isna(r["Code"]) else str(r["Code"]).strip(),
             "rate_existing": None if pd.isna(r["Old Rate"]) else float(r["Old Rate"]),
@@ -156,11 +158,15 @@ def _df_to_details(df: pd.DataFrame) -> List[Dict[str, Any]]:
         if has_new_bi:
             v = r.get("New Billing Increment")
             item["new_billing_increment"] = None if pd.isna(v) else str(v).strip()
-        if has_code_name:
-            v = r.get("Code Name")
+
+        # use the resolved column name here
+        if code_name_col:
+            v = r.get(code_name_col)
             item["code_name"] = None if pd.isna(v) else str(v).strip()
+
         details.append(item)
     return details
+
 
 # ----------------- per-folder pipeline worker -----------------
 
@@ -271,12 +277,44 @@ def process_one_folder(folder: Path) -> str:
         if any_files:
             meta["preprocessed_results"] = pre_map
             _save_meta(meta_path, meta)
-            # stage
-            if any(v is True for v in pre_map.values()):
-                try:
-                    mark_processing_stage(directory_name=folder.name, stage="file_cleaned")
-                except Exception as e:
-                    print(f"[{folder.name}] stage warn (file_cleaned): {e}")
+
+            # --- Check if any JeraSoft or Vendor file is False ---
+            # Split flags into JeraSoft and Vendor based on filename
+            jera_flags = [v for name, v in pre_map.items() if "jerasoft" in name.lower()]
+            vendor_flags = [v for name, v in pre_map.items() if "jerasoft" not in name.lower()]
+
+            # Flag is false if any file in either group is False
+            jera_failed = any(not v for v in jera_flags)
+            vendor_failed = any(not v for v in vendor_flags)
+
+            # Final status depends on if there is any failure in either group
+            final_ok = not (jera_failed or vendor_failed)
+
+            meta["final_ok"] = final_ok
+            _save_meta(meta_path, meta)
+
+            try:
+                mark_processing_stage(
+                    directory_name=folder.name,
+                    stage="file_cleaned",
+                    final_status=final_ok
+                )
+            except Exception as e:
+                print(f"[{folder.name}] stage warn (file_cleaned): {e}")
+
+            # Optional: helpful debug logs
+            if not final_ok:
+                print(
+                    f"[{folder.name}] file_cleaned: FALSE — "
+                    f"JeraSoft failed={jera_failed} (flags={jera_flags}), "
+                    f"Vendor failed={vendor_failed} (flags={vendor_flags})"
+                )
+            else:
+                print(
+                    f"[{folder.name}] file_cleaned: TRUE — "
+                    f"JeraSoft ok={not jera_failed}, Vendor ok={not vendor_failed}"
+                )
+
 
     # -------- 3) Comparison (if needed) --------
     meta = _load_meta(meta_path) or {}
