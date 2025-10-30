@@ -898,37 +898,135 @@ def clean_billing_increment(val) -> str:
 #     return df
 
 
-def normalize_dates(df: pd.DataFrame, column_name: str, date_format_email: str) -> pd.DataFrame:
+
+def normalize_dates(df: pd.DataFrame, column_name: str, date_format_email: str | None) -> pd.DataFrame:
     """
-    Clean a date column and produce YYYY-MM-DD strings, using a known input format:
-      - Supports MM-DD-YYYY, DD-MM-YYYY, YYYY-MM-DD
-      - Strips timezones/UTC markers
-      - Replaces '.' or '/' with '-'
-      - Removes any time portion
+    Normalize to 'YYYY-MM-DD'. Supports:
+      - Numeric: MM-DD-YYYY, DD-MM-YYYY, YYYY-MM-DD
+      - Month names: DD-MMM-YYYY, MMM-DD-YYYY, DD-MMMM-YYYY, MMMM-DD-YYYY, YYYY-MMM-DD, YYYY-MMMM-DD
+      - Strips time/zone tails and handles Excel serial dates.
+      - If date_format_email is None or 'AUTO', it tries multiple formats.
     """
-    # 1) to string + trim
     s = df[column_name].astype(str).str.strip()
 
-    # 2) drop TZ junk like 'UTC', 'Z', 'zz', '+0000', '+03:00'
-    s = s.str.replace(r'\s*(UTC|Z|zz|[+\-]\d{2}:?\d{2}|[+\-]\d{4})\s*', '', regex=True)
+    # Excel serials first (days since 1899-12-30)
+    def _excel_serial_to_date(text: str):
+        if re.fullmatch(r'\d{1,6}', text or ''):
+            try:
+                serial = int(text)
+                if serial > 0:
+                    return (EXCEL_EPOCH + pd.Timedelta(days=serial)).date()
+            except Exception:
+                pass
+        return None
 
-    # 3) unify separators and strip trailing times
+    # Clean: drop tz tokens, unify separators, remove trailing time
+    s = s.str.replace(r'(?:\s+(?:UTC|Z|zz)|\s+[+\-]\d{2}:?\d{2}|\s+[+\-]\d{4})\s*$', '', regex=True)
     s = s.str.replace(r'[./]', '-', regex=True)
-    s = s.str.extract(r'(\d{1,4}-\d{1,2}-\d{1,4})')[0]
+    s = s.str.replace(r'[T ]\d.*$', '', regex=True)
 
-    # 4) strict parse by the declared email format, then output YYYY-MM-DD
-    fmt_map = {
-        'MM-DD-YYYY': '%m-%d-%Y',
-        'DD-MM-YYYY': '%d-%m-%Y',
-        'YYYY-MM-DD': '%Y-%m-%d',
+    def _to_strptime(fmt: str) -> str:
+        f = fmt.strip().lower().replace('/', '-').replace('.', '-')
+        return (f.replace('yyyy', '%Y')
+                 .replace('mmmm', '%B')
+                 .replace('mmm',  '%b')
+                 .replace('mm',   '%m')
+                 .replace('dd',   '%d'))
+
+    explicit = {
+        'MM-DD-YYYY','DD-MM-YYYY','YYYY-MM-DD',
+        'DD-MMM-YYYY','MMM-DD-YYYY','DD-MMMM-YYYY','MMMM-DD-YYYY',
+        'YYYY-MMM-DD','YYYY-MMMM-DD'
     }
-    fmt_in = fmt_map.get((date_format_email or '').strip().upper())
-    if not fmt_in:
-        raise ValueError(f"Unsupported date format: {date_format_email}")
+    auto_formats = [
+        '%Y-%m-%d','%d-%m-%Y','%m-%d-%Y',
+        '%d-%b-%Y','%b-%d-%Y','%Y-%b-%d',
+        '%d-%B-%Y','%B-%d-%Y','%Y-%B-%d',
+    ]
 
-    parsed = pd.to_datetime(s, format=fmt_in, errors='coerce')
-    df[column_name] = parsed.dt.strftime('%Y-%m-%d')  # final canonical form as string
+    out = []
+    for raw in s.tolist():
+        if not raw:
+            out.append(None); continue
+
+        ser = _excel_serial_to_date(raw)
+        if ser is not None:
+            out.append(ser.strftime('%Y-%m-%d')); continue
+
+        parsed = None
+        req = (date_format_email or '').strip()
+
+        # helper: additional fallbacks to try if strict parse fails
+        fallback_formats = [
+            '%Y-%m-%d','%d-%m-%Y','%m-%d-%Y',
+            '%d-%b-%Y','%b-%d-%Y','%Y-%b-%d',
+            '%d-%B-%Y','%B-%d-%Y','%Y-%B-%d',
+        ]
+
+        if not req or req.upper() == 'AUTO':
+            for fmt in fallback_formats:
+                try:
+                    parsed = datetime.strptime(raw, fmt); break
+                except ValueError:
+                    pass
+            if parsed is None:
+                try:
+                    parsed = dparse.parse(raw, dayfirst=True, fuzzy=True, default=datetime(1900,1,1))
+                except Exception:
+                    parsed = None
+        else:
+            # strict attempt with provided format (supports MMM/MMMM tokens)
+            fmt = _to_strptime(req) if '%' not in req else req
+            try:
+                parsed = datetime.strptime(raw, fmt)
+            except ValueError:
+                parsed = None
+                # SMART FALLBACK: if the text contains letters (month names), try alpha-month formats
+                if re.search(r'[A-Za-z]', raw):
+                    for fmt in ['%d-%b-%Y','%b-%d-%Y','%Y-%b-%d','%d-%B-%Y','%B-%d-%Y','%Y-%B-%d']:
+                        try:
+                            parsed = datetime.strptime(raw, fmt); break
+                        except ValueError:
+                            continue
+                # If still not parsed, try numeric alternates too
+                if parsed is None:
+                    for fmt in ['%Y-%m-%d','%d-%m-%Y','%m-%d-%Y']:
+                        try:
+                            parsed = datetime.strptime(raw, fmt); break
+                        except ValueError:
+                            continue
+                # Last-resort: dateutil
+                if parsed is None:
+                    try:
+                        parsed = dparse.parse(raw, dayfirst=True, fuzzy=True, default=datetime(1900,1,1))
+                    except Exception:
+                        parsed = None
+
+        out.append(parsed.strftime('%Y-%m-%d') if parsed else None)
+
+    df[column_name] = out
     return df
+
+
+
+def _normalize_excel_writer_path(path: str) -> tuple[str, dict]:
+    """
+    Make writer extension predictable and attach the right engine.
+    - Keep .xlsx/.xlsm and use openpyxl.
+    - If .xls or unknown/blank extension, switch to .xlsx (openpyxl can’t write .xls).
+    """
+    root, ext = os.path.splitext(path)
+    ext_low = ext.lower()
+    if ext_low in ('.xlsx', '.xlsm'):
+        return root + ext_low, {'engine': 'openpyxl'}
+    if ext_low == '.xls':
+        new_path = root + '.xlsx'
+        print(f"[writer] upgrading output extension from {ext} to .xlsx")
+        return new_path, {'engine': 'openpyxl'}
+    # no or weird extension → force .xlsx
+    new_path = (root if ext else path) + '.xlsx'
+    print(f"[writer] forcing .xlsx for unknown ext {ext or '(none)'}")
+    return new_path, {'engine': 'openpyxl'}
 
 def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email: str | None = None) -> pd.DataFrame:
     """
@@ -1024,10 +1122,10 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
 
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r'C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-sheet-automation\attachments\test1.xlsx'
-    OUT_PATH = r'C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-sheet-automation\attachments\test1_cleaned.xlsx'
+    PATH = r"C:\Users\Tahira Sadaf\Documents\20251028000317_51558_25029.xlsx"
+    OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
-    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='DD-MM-YYYY')
+    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='DD-MMM-YYYY')
    
     print('✅ Cleaned and saved.')
