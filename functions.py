@@ -825,3 +825,151 @@
 #     print(f"Files processed:   {files_done}")
 #     print(f"Rows inserted:     {rows_total}")
 #     return folders_done, files_done, rows_total
+
+# def iter_preprocessed_dirs_(attachments_root: Path):
+#     """
+#     Yield directories under attachments_root whose metadata.json has "jerasoft_preprocessed": true.
+#     """
+#     for child in sorted(attachments_root.iterdir()):
+#         if not child.is_dir():
+#             continue
+#         meta = child / "metadata.json"
+#         if not meta.exists():
+#             continue
+#         try:
+#             with meta.open("r", encoding="utf-8") as f:
+#                 data = json.load(f)
+#         except Exception:
+#             print('  ✖ Failed to load metadata')
+#             continue
+
+#         # NEW: require manual date verification approval
+#         if not bool(data.get("date_verification_ingestion_status")):
+#             print(f"[SKIP] Awaiting date verification approval: {child}")
+#             continue
+
+#         if bool(data.get("jerasoft_preprocessed")) is True:
+#             results = data.get("preprocessed_results", {})
+#             # if not results or any(v is False for v in results.values()):
+#             if not results:
+#                 yield child
+
+# def files_to_clean(folder: Path):
+#     """
+#     Return all cleanable files in folder (CSV/XLS/XLSX/XLSM), excluding metadata.json.
+#     """
+#     for f in sorted(folder.iterdir()):
+#         if not f.is_file():
+#             continue
+#         if f.name.lower() == "metadata.json":
+#             continue
+#         if f.name.startswith("~$") or f.name.startswith("."):
+#              continue
+#         if f.suffix.lower() in ALLOWED_EXTS:
+#             yield f
+
+# #________________ Ratesheet Comparision Script _____________
+# def iter_preprocessed_dirs(attachments_root: Path) -> Iterable[Path]:
+#     """
+#     Yield folders that finished JeraSoft and still need comparison:
+#     - no comparision_result yet, or
+#     - comparision_result exists but at least one vendor flag is not True.
+#     """
+#     for child in sorted(attachments_root.iterdir()):
+#         if not child.is_dir():
+#             continue
+#         meta_path = child / "metadata.json"
+#         if not meta_path.exists():
+#             continue
+#         try:
+#             with meta_path.open("r", encoding="utf-8") as f:
+#                 data = json.load(f)
+#         except Exception:
+#             continue
+
+#         # NEW: require manual date verification approval
+#         if not bool(data.get("date_verification_ingestion_status")):
+#             print(f"[SKIP] Awaiting date verification approval: {child}")
+#             continue
+
+#         # if data.get("jerasoft_preprocessed") is True:
+#         #     comp = data.get("comparision_result") or {}
+#         #     per_vendor = {k: v for k, v in comp.items() if k != "result"}
+#         #     # run if no result yet, or any vendor isn’t exactly True
+#         #     if not comp or any(v is not True for v in per_vendor.values()):
+#         #         yield child
+        
+#         if data.get("jerasoft_preprocessed") is True:
+#             comp = data.get("comparision_result") or {}
+#             # run only if 'result' key is not present
+#             if "result" not in comp:
+#                 yield child
+# def _read_metadata(folder: Path) -> dict:
+#     with (folder / "metadata.json").open("r", encoding="utf-8") as f:
+#         return json.load(f)
+
+# def _write_metadata(folder: Path, data: dict) -> None:
+#     with (folder / "metadata.json").open("w", encoding="utf-8") as f:
+#         json.dump(data, f, indent=2)
+
+# # ------------ metadata helpers ------------
+
+# def _parse_iso_utc_safe(s: Optional[str]) -> Optional[datetime]:
+#     if not s or not isinstance(s, str):
+#         return None
+#     try:
+#         return datetime.fromisoformat(s.replace("Z", "+00:00"))
+#     except Exception:
+#         return None
+
+# def _atomic_write_json(path: Path, data: dict) -> None:
+#     tmp = path.with_suffix(path.suffix + ".tmp")
+#     with tmp.open("w", encoding="utf-8") as f:
+#         json.dump(data, f, ensure_ascii=False, indent=2)
+#     os.replace(tmp, path)
+
+
+
+
+# def comparison_result_ok(meta: Dict[str, Any]) -> bool:
+#     """
+#     True iff metadata has a result 'ok' under either:
+#       meta['comparison_result']['result']  or  meta['comparision_result']['result']
+#     """
+#     d = meta.get("comparison_result") or meta.get("comparision_result")
+#     if not isinstance(d, dict):
+#         return False
+#     return str(d.get("result", "")).strip().lower() == "ok"
+
+
+# def mark_results_pushed(folder: Path, filename: str, status: Any) -> None:
+#     meta = load_metadata(folder) or {}
+#     rp = meta.get("results_pushed")
+#     if not isinstance(rp, dict):
+#         rp = {}
+#     rp[filename] = status
+#     meta["results_pushed"] = rp
+#     save_metadata(folder, meta)
+
+# # ------------ file discovery ------------
+
+# def find_result_files(folder: Path) -> List[Path]:
+#     """
+#     Return files whose stem **ends with** '_comparision_result' (case-insensitive)
+#     and have an allowed extension.
+#     """
+#     out: List[Path] = []
+#     for f in sorted(folder.iterdir()):
+#         if not f.is_file():
+#             continue
+#         if f.suffix.lower() not in _ALLOWED_EXTS:
+#             continue
+#         if f.stem.lower().endswith("_comparision_result"):
+#             out.append(f)
+#     return out
+
+
+
+
+
+
