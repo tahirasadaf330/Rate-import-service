@@ -1,6 +1,6 @@
 from __future__ import annotations
-
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
@@ -20,33 +20,34 @@ from database import (
 
 # Reuse constants from your code
 ALLOWED_EXTS = {".xlsx", ".xls", ".csv"}
+EXPECTED_COLS = ["Code", "Old Rate", "New Rate", "Effective Date", "Status", "Change Type", "Notes"]
 
-# ------------- small metadata helpers (local to this module) -------------
-
-def _load_meta(meta_path: Path) -> Optional[dict]:
+def load_metadata(folder: Path) -> Optional[Dict[str, Any]]:
+    meta = folder / "metadata.json"
+    if not meta.exists():
+        return None
     try:
-        with meta_path.open("r", encoding="utf-8") as f:
-            return json.load(f) or {}
+        with meta.open("r", encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
         return None
 
-def _save_meta(meta_path: Path, data: dict) -> None:
-    # atomic-ish write inside the folder
-    tmp = meta_path.with_suffix(meta_path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    tmp.replace(meta_path)
+def save_metadata(folder: Path, data: Dict[str, Any]) -> None:
+    # atomic write to avoid corrupting metadata.json
+    path = folder / "metadata.json"
+    import tempfile, os
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", dir=folder) as tmp:
+        json.dump(data, tmp, ensure_ascii=False, indent=2)
+        tmp.flush(); os.fsync(tmp.fileno())
+        tmpname = tmp.name
+    os.replace(tmpname, path)
 
-def _as_of_from_meta(meta: dict) -> str:
-    d = (meta.get("date_utc") or "").strip()
-    if len(d) == 10 and d[4] == "-" and d[7] == "-":
-        return d
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-def _cleaned_out_path(p: Path) -> Path:
+def cleaned_out_path(p: Path) -> Path:
+    """Return <stem>_cleaned<suffix> in the same folder."""
+    p = Path(p)
     return p.with_name(f"{p.stem}_cleaned{p.suffix}")
-
-def _find_jerasoft_file(folder: Path) -> Optional[Path]:
+def find_jerasoft_file(folder: Path) -> Optional[Path]:
+    """Prefer jerasoft_comparison_all.xlsx, else first *_jerasoft_comparison.xlsx."""
     prime = folder / "jerasoft_comparison_all_cleaned.xlsx"
     if prime.exists():
         return prime
@@ -57,8 +58,11 @@ def _find_jerasoft_file(folder: Path) -> Optional[Path]:
         and p.name.lower().endswith("_jerasoft_comparison_cleaned.xlsx")
     )
     return candidates[0] if candidates else None
-
-def _vendor_files(folder: Path) -> List[Path]:
+def vendor_files(folder: Path) -> list[Path]:
+    """
+    Return vendor files to compare, preferring *_cleaned.* when both exist.
+    Excludes metadata.json and any JeraSoft comparison outputs (raw or cleaned).
+    """
     def is_jerasoft(p: Path) -> bool:
         n = p.name.lower()
         return (
@@ -67,6 +71,8 @@ def _vendor_files(folder: Path) -> List[Path]:
             or n.endswith("_jerasoft_comparison.xlsx")
             or n.endswith("_jerasoft_comparison_cleaned.xlsx")
         )
+
+    # collect candidates
     candidates: list[Path] = []
     for f in sorted(folder.iterdir()):
         if not f.is_file():
@@ -79,22 +85,41 @@ def _vendor_files(folder: Path) -> List[Path]:
             continue
         candidates.append(f)
 
-    # prefer *_cleaned over raw twin of same base+ext
+    # prefer *_cleaned over raw twin
     by_base: dict[str, dict[str, Path]] = {}
     for f in candidates:
         stem = f.stem
         is_cleaned = stem.endswith("_cleaned")
         base_stem = stem[:-8] if is_cleaned else stem  # strip "_cleaned"
-        key = f"{base_stem}{f.suffix.lower()}"         # base + ext
+        key = f"{base_stem}{f.suffix.lower()}"         # base name + ext
+
         entry = by_base.setdefault(key, {})
-        entry["cleaned" if is_cleaned else "raw"] = f
+        if is_cleaned:
+            entry["cleaned"] = f
+        else:
+            entry["raw"] = f
 
     chosen: list[Path] = []
-    for _, pair in by_base.items():
+    for key, pair in by_base.items():
         chosen.append(pair.get("cleaned") or pair.get("raw"))
-    return sorted(chosen)
 
-def _read_comparison_table(path: Path) -> pd.DataFrame:
+    return sorted(chosen)
+def as_of_from_metadata(folder: Path) -> str:
+    """Use metadata.date_utc if available, else today (UTC, YYYY-MM-DD)."""
+    meta = folder / "metadata.json"
+    if meta.exists():
+        try:
+            with meta.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            d = (data.get("date_utc") or "").strip()
+            if len(d) == 10 and d[4] == "-" and d[7] == "-":
+                return d
+        except Exception:
+            pass
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def read_comparison_table(path: Path) -> pd.DataFrame:
     ext = path.suffix.lower()
     if ext in (".xlsx", ".xls"):
         df = pd.read_excel(path)
@@ -103,8 +128,7 @@ def _read_comparison_table(path: Path) -> pd.DataFrame:
     else:
         raise ValueError(f"Unsupported file type: {path.suffix}")
 
-    # normalize columns as your main.py does
-    EXPECTED_COLS = ["Code", "Old Rate", "New Rate", "Effective Date", "Status", "Change Type", "Notes"]
+    # robust column rename
     rename_map: Dict[str, str] = {}
     cols_norm = {c: " ".join(str(c).strip().split()).lower() for c in df.columns}
     for c, n in cols_norm.items():
@@ -117,32 +141,34 @@ def _read_comparison_table(path: Path) -> pd.DataFrame:
         elif n == "notes": rename_map[c] = "Notes"
         elif n == "old billing increment": rename_map[c] = "Old Billing Increment"
         elif n == "new billing increment": rename_map[c] = "New Billing Increment"
-        elif n == "code name": rename_map[c] = "Code Name"      # ← add this
-        elif n == "dst code name": rename_map[c] = "Code Name"
+        elif n == "code name": rename_map[c] = "Dst Code Name"
+        elif n == "dst code name": rename_map[c] = "Dst Code Name"
     df = df.rename(columns=rename_map)
 
+    # ensure required columns exist
     missing = [c for c in EXPECTED_COLS if c not in df.columns]
     if missing:
         raise ValueError(f"{path.name}: missing expected columns {missing}. Found: {list(df.columns)}")
 
+    # Clean types but DO NOT drop optional columns
     df["Code"] = df["Code"].astype(str).str.strip()
-    df = df[df["Code"].ne("")]
+    df = df[df["Code"].ne("")]  # drop empty codes
     df["Old Rate"] = pd.to_numeric(df["Old Rate"], errors="coerce")
     df["New Rate"] = pd.to_numeric(df["New Rate"], errors="coerce")
     df["Effective Date"] = pd.to_datetime(df["Effective Date"], errors="coerce", utc=True)
     df.dropna(how="all", inplace=True)
     return df
-
-def _df_to_details(df: pd.DataFrame) -> List[Dict[str, Any]]:
+def df_to_detail_dicts(df: pd.DataFrame) -> List[Dict[str, Any]]:
     details: List[Dict[str, Any]] = []
+
     has_old_bi    = "Old Billing Increment" in df.columns
     has_new_bi    = "New Billing Increment" in df.columns
-    # this variable holds the actual column name to read
-    code_name_col = "Code Name" if "Code Name" in df.columns else ("Dst Code Name" if "Dst Code Name" in df.columns else None)
+    has_code_name = "Dst Code Name" in df.columns  # <-- align with rename
 
     for _, r in df.iterrows():
         eff = r["Effective Date"]
-        eff_py = None if pd.isna(eff) else eff.to_pydatetime()
+        eff_py = None if pd.isna(eff) else eff.to_pydatetime()  # tz-aware UTC
+
         item: Dict[str, Any] = {
             "dst_code": None if pd.isna(r["Code"]) else str(r["Code"]).strip(),
             "rate_existing": None if pd.isna(r["Old Rate"]) else float(r["Old Rate"]),
@@ -152,20 +178,116 @@ def _df_to_details(df: pd.DataFrame) -> List[Dict[str, Any]]:
             "status": None if pd.isna(r["Status"]) else str(r["Status"]).strip(),
             "notes": None if pd.isna(r["Notes"]) else str(r["Notes"]).strip(),
         }
+
         if has_old_bi:
             v = r.get("Old Billing Increment")
             item["old_billing_increment"] = None if pd.isna(v) else str(v).strip()
         if has_new_bi:
             v = r.get("New Billing Increment")
             item["new_billing_increment"] = None if pd.isna(v) else str(v).strip()
-
-        # use the resolved column name here
-        if code_name_col:
-            v = r.get(code_name_col)
+        if has_code_name:
+            v = r.get("Dst Code Name")
             item["code_name"] = None if pd.isna(v) else str(v).strip()
 
         details.append(item)
+
     return details
+
+BOUND = r"(?:(?<=^)|(?<=,))\s*{label}\s*(?:(?=,)|(?=$))"  # comma-boundary regex
+
+def compute_upload_stats(dfs: List[pd.DataFrame]) -> Dict[str, int]:
+    if not dfs:
+        return {
+            "total_rows": 0,
+            "new": 0, "increase": 0, "decrease": 0, "unchanged": 0, "closed": 0,
+            "backdated_increase": 0, "backdated_decrease": 0,
+            "billing_increment_changes": 0,
+        }
+
+    df = pd.concat(dfs, ignore_index=True)
+
+    # Membership by Change Type (supports multi-label like "Billing ... Changes,Backdated Increase")
+    is_new      = _has_ct(df, "New")
+    is_closed   = _has_ct(df, "Closed")
+    is_unchanged= _has_ct(df, "Unchanged")
+
+    is_back_inc = _has_ct(df, "Backdated Increase")
+    is_back_dec = _has_ct(df, "Backdated Decrease")
+
+    # Normal inc/dec exclude backdated so totals don’t double-count
+    is_inc = _has_ct(df, "Increase") & ~is_back_inc
+    is_dec = _has_ct(df, "Decrease") & ~is_back_dec
+
+    # Billing increment changes: prefer ground truth from columns if present;
+    # otherwise fall back to label membership.
+    bic = 0
+    obi = df.get("Old Billing Increment")
+    nbi = df.get("New Billing Increment")
+    if obi is not None and nbi is not None:
+        # Compare with nulls treated as equal and types normalized
+        o = pd.Series(obi, dtype="string").fillna("")
+        n = pd.Series(nbi, dtype="string").fillna("")
+        bic = int((o != n).sum())
+    else:
+        bic = int(_has_ct(df, "Billing Increments Changes").sum())
+
+    return {
+        "total_rows": int(len(df)),
+        "new":               int(is_new.sum()),
+        "increase":          int(is_inc.sum()),
+        "decrease":          int(is_dec.sum()),
+        "unchanged":         int(is_unchanged.sum()),
+        "closed":            int(is_closed.sum()),
+        "backdated_increase":int(is_back_inc.sum()),
+        "backdated_decrease":int(is_back_dec.sum()),
+        "billing_increment_changes": bic,
+    }
+def parse_received_at(meta: Dict[str, Any]) -> Optional[datetime]:
+    raw = meta.get("receivedDateTime_raw")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            s = raw.strip().replace("Z", "+00:00")
+            return datetime.fromisoformat(s).astimezone(timezone.utc)
+        except Exception:
+            pass
+    date_s = meta.get("date_utc")
+    time_s = meta.get("time_utc")
+    if isinstance(date_s, str) and date_s.strip():
+        try:
+            ts = f"{date_s.strip()}T{(time_s or '00:00:00').strip()}"
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            return dt
+        except Exception:
+            return None
+    return None
+
+def load_metadata(folder: Path) -> Optional[Dict[str, Any]]:
+    meta = folder / "metadata.json"
+    if not meta.exists():
+        return None
+    try:
+        with meta.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+    def save_metadata(folder: Path, data: Dict[str, Any]) -> None:
+    # atomic write to avoid corrupting metadata.json
+     path = folder / "metadata.json"
+    import tempfile, os
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", dir=folder) as tmp:
+        json.dump(data, tmp, ensure_ascii=False, indent=2)
+        tmp.flush(); os.fsync(tmp.fileno())
+        tmpname = tmp.name
+    os.replace(tmpname, path)
+    
+def _has_ct(df: pd.DataFrame, label: str) -> pd.Series:
+    pat = re.compile(BOUND.format(label=re.escape(label)), flags=re.IGNORECASE)
+    ct = df.get("Change Type", pd.Series([], dtype="object")).astype(str)
+    return ct.str.contains(pat, na=False)
 
 
 # ----------------- per-folder pipeline worker -----------------
@@ -176,7 +298,7 @@ def process_one_folder(folder: Path) -> str:
     Returns a short log string.
     """
     meta_path = folder / "metadata.json"
-    meta = _load_meta(meta_path)
+    meta = load_metadata(folder)
     if not meta:
         return f"[{folder.name}] skip: no/invalid metadata.json"
 
@@ -205,12 +327,12 @@ def process_one_folder(folder: Path) -> str:
             info = export_rates_by_query(company, output_path, subject, prefix_code=prefix)
         except Exception as e:
             meta["keyword_error"] = str(e)
-            _save_meta(meta_path, meta)
+            save_metadata(folder, meta)
             return f"[{folder.name}] ✖ export failed: {e}"
 
         if isinstance(info, str):
             meta["keyword_error"] = info
-            _save_meta(meta_path, meta)
+            save_metadata(folder, meta)
             return f"[{folder.name}] export error: {info}"
 
         # Success: count rows, set flags
@@ -227,7 +349,7 @@ def process_one_folder(folder: Path) -> str:
         meta["human_eval_details_jerasoft"] = {"file": Path(output_path).name, "rows": rows_js}
         meta["need_human_eval_jerasoft"] = bool(meta.get("need_human_eval_jerasoft")) or (rows_js < 100)
         meta["jerasoft_preprocessed"] = True
-        _save_meta(meta_path, meta)
+        save_metadata(folder, meta)
 
         try:
             mark_processing_stage(directory_name=folder.name, stage="jera_fetched")
@@ -237,7 +359,7 @@ def process_one_folder(folder: Path) -> str:
 
     # -------- 2) Cleaning (if needed) --------
     # we consider "needed" if metadata has no 'preprocessed_results' or it's empty
-    meta = _load_meta(meta_path) or {}
+    meta = load_metadata(folder) or {}
     pre_map: dict = meta.get("preprocessed_results", {}) or {}
     if not pre_map:
         any_files = False
@@ -249,7 +371,7 @@ def process_one_folder(folder: Path) -> str:
             any_files = True
 
             in_path = str(file_path)
-            out_path = str(_cleaned_out_path(file_path))
+            out_path = str(cleaned_out_path(file_path))
 
             date_fmt = (meta.get("date_format_identified") or "").strip() or None
             fname = file_path.name.lower()
@@ -276,7 +398,7 @@ def process_one_folder(folder: Path) -> str:
 
         if any_files:
             meta["preprocessed_results"] = pre_map
-            _save_meta(meta_path, meta)
+            save_metadata(folder, meta)
 
             # --- Check if any JeraSoft or Vendor file is False ---
             # Split flags into JeraSoft and Vendor based on filename
@@ -291,7 +413,7 @@ def process_one_folder(folder: Path) -> str:
             final_ok = not (jera_failed or vendor_failed)
 
             meta["final_ok"] = final_ok
-            _save_meta(meta_path, meta)
+            save_metadata(folder, meta)
 
             try:
                 mark_processing_stage(
@@ -317,33 +439,33 @@ def process_one_folder(folder: Path) -> str:
 
 
     # -------- 3) Comparison (if needed) --------
-    meta = _load_meta(meta_path) or {}
+    meta = load_metadata(folder) or {}
     if "comparision_result" not in (meta.keys()):
         pre_map = meta.get("preprocessed_results", {}) or {}
-        left_path = _find_jerasoft_file(folder)
+        left_path = find_jerasoft_file(folder)
         if not left_path:
             meta["comparision_result"] = {"result": "comparison skipped: no baseline file found"}
-            _save_meta(meta_path, meta)
+            save_metadata(folder, meta)
             return f"[{folder.name}] skip compare: no baseline"
 
         baseline_ok = bool(pre_map.get(left_path.name))
         if not baseline_ok:
             meta["comparision_result"] = {"result": "comparison skipped: comparison file failed preprocessing"}
-            _save_meta(meta_path, meta)
+            save_metadata(folder, meta)
             return f"[{folder.name}] skip compare: baseline not preprocessed"
 
-        vfiles = _vendor_files(folder)
+        vfiles = vendor_files(folder)
         if not vfiles:
             meta["comparision_result"] = {"result": "no vendor files to compare"}
-            _save_meta(meta_path, meta)
+            save_metadata(folder, meta)
             return f"[{folder.name}] no vendor files"
 
-        as_of_date = _as_of_from_meta(meta)
+        as_of_date = as_of_from_metadata(folder)
         try:
             left_df = read_table(str(left_path), None)
         except Exception as e:
             meta["comparision_result"] = {"result": f"comparison skipped: failed to read baseline ({e})"}
-            _save_meta(meta_path, meta)
+            save_metadata(folder, meta)
             return f"[{folder.name}] skip compare: read baseline fail"
 
         comp_result: Dict[str, bool] = {}
@@ -368,7 +490,7 @@ def process_one_folder(folder: Path) -> str:
                     "result_file": out_path.name,
                     "generated_at_utc": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
                 }
-                _save_meta(meta_path, meta)
+                save_metadata(folder, meta)
 
             except Exception as e:
                 comp_result[vname] = False
@@ -380,7 +502,7 @@ def process_one_folder(folder: Path) -> str:
         else:
             meta["comparision_result"] = {"result": "no eligible vendor files"}
         meta["processed_at_utc"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        _save_meta(meta_path, meta)
+        save_metadata(folder, meta)
 
         try:
             mark_processing_stage(directory_name=folder.name, stage="rate_compared")
@@ -388,7 +510,7 @@ def process_one_folder(folder: Path) -> str:
             print(f"[{folder.name}] stage warn (rate_compared): {e}")
 
     # -------- 4) DB push (per-folder) --------
-    meta = _load_meta(meta_path) or {}
+    meta = load_metadata(folder) or {}
     comp = meta.get("comparision_result")
     if not (isinstance(comp, dict) and str(comp.get("result", "")).strip().lower() == "ok"):
         return f"[{folder.name}] skip DB push: result not ok"
@@ -413,7 +535,7 @@ def process_one_folder(folder: Path) -> str:
     per_file_df: Dict[str, pd.DataFrame] = {}
     for f in to_push:
         try:
-            df_tmp = _read_comparison_table(f)
+            df_tmp = read_comparison_table(f)
             per_file_df[f.name] = df_tmp
             if not df_tmp.empty:
                 dfs_to_push.append(df_tmp)
@@ -425,79 +547,17 @@ def process_one_folder(folder: Path) -> str:
         for f in to_push:
             rp[f.name] = "empty file no results to push to the database"
         meta["results_pushed"] = rp
-        _save_meta(meta_path, meta)
+        save_metadata(folder, meta)
         return f"[{folder.name}] all empty; no upload"
 
-    # compute totals (same logic as your compute_upload_stats)
-    def _has_ct(df: pd.DataFrame, label: str) -> pd.Series:
-        import re
-        BOUND = r"(?:(?<=^)|(?<=,))\s*{label}\s*(?:(?=,)|(?=$))"
-        pat = re.compile(BOUND.format(label=re.escape(label)), flags=re.IGNORECASE)
-        ct = df.get("Change Type", pd.Series([], dtype="object")).astype(str)
-        return ct.str.contains(pat, na=False)
 
-    def _compute_stats(dfs: List[pd.DataFrame]) -> Dict[str, int]:
-        if not dfs:
-            return {
-                "total_rows": 0, "new": 0, "increase": 0, "decrease": 0, "unchanged": 0, "closed": 0,
-                "backdated_increase": 0, "backdated_decrease": 0, "billing_increment_changes": 0,
-            }
-        df = pd.concat(dfs, ignore_index=True)
-        is_new = _has_ct(df, "New")
-        is_closed = _has_ct(df, "Closed")
-        is_unchanged = _has_ct(df, "Unchanged")
-        is_back_inc = _has_ct(df, "Backdated Increase")
-        is_back_dec = _has_ct(df, "Backdated Decrease")
-        is_inc = _has_ct(df, "Increase") & ~is_back_inc
-        is_dec = _has_ct(df, "Decrease") & ~is_back_dec
-
-        obi = df.get("Old Billing Increment")
-        nbi = df.get("New Billing Increment")
-        if obi is not None and nbi is not None:
-            o = pd.Series(obi, dtype="string").fillna("")
-            n = pd.Series(nbi, dtype="string").fillna("")
-            bic = int((o != n).sum())
-        else:
-            bic = int(_has_ct(df, "Billing Increments Changes").sum())
-
-        return {
-            "total_rows": int(len(df)),
-            "new": int(is_new.sum()),
-            "increase": int(is_inc.sum()),
-            "decrease": int(is_dec.sum()),
-            "unchanged": int(is_unchanged.sum()),
-            "closed": int(is_closed.sum()),
-            "backdated_increase": int(is_back_inc.sum()),
-            "backdated_decrease": int(is_back_dec.sum()),
-            "billing_increment_changes": bic,
-        }
-
-    stats_totals = _compute_stats(dfs_to_push)
+    stats_totals = compute_upload_stats(dfs_to_push)
 
     sender = str(meta.get("sender") or "").strip() or None
     subject = (meta.get("subject") or "").strip() or None
 
-    # parse received_at from metadata (UTC)
-    def _parse_received_at(meta: Dict[str, Any]) -> Optional[datetime]:
-        raw = meta.get("receivedDateTime_raw")
-        if isinstance(raw, str) and raw.strip():
-            try:
-                s = raw.strip().replace("Z", "+00:00")
-                return datetime.fromisoformat(s).astimezone(timezone.utc)
-            except Exception:
-                pass
-        date_s = meta.get("date_utc")
-        time_s = meta.get("time_utc")
-        if isinstance(date_s, str) and date_s.strip():
-            try:
-                ts = f"{date_s.strip()}T{(time_s or '00:00:00').strip()}"
-                dt = datetime.fromisoformat(ts)
-                return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
-            except Exception:
-                return None
-        return None
-
-    received_at = _parse_received_at(meta)
+ 
+    received_at = parse_received_at(meta)
     processed_at = None
     try:
         rawp = meta.get("processed_at_utc")
@@ -516,12 +576,12 @@ def process_one_folder(folder: Path) -> str:
                 totals=stats_totals,
             )
             meta["rate_upload_id"] = int(upload_id)
-            _save_meta(meta_path, meta)
+            save_metadata(folder, meta)
         except Exception as e:
             for f in to_push:
                 rp[f.name] = False
             meta["results_pushed"] = rp
-            _save_meta(meta_path, meta)
+            save_metadata(folder, meta)
             return f"[{folder.name}] ✖ create upload row: {e}"
 
     # push each result file
@@ -532,7 +592,7 @@ def process_one_folder(folder: Path) -> str:
             # >>> CHANGED: never use "or" with a DataFrame on the left
             df = per_file_df.get(f.name)  # may be None
             if df is None:                # >>> CHANGED
-                df = _read_comparison_table(f)  # >>> CHANGED
+                df = read_comparison_table(f)  # >>> CHANGED
 
             # Safe emptiness check
             if df is None or getattr(df, "empty", True):  # >>> CHANGED
@@ -545,7 +605,7 @@ def process_one_folder(folder: Path) -> str:
             except Exception:
                 pass
 
-            details = _df_to_details(df)
+            details = df_to_detail_dicts(df)
             if not details:  # list truthiness is fine
                 rp[f.name] = "no rows extracted to push"
                 print(f"[{folder.name}]    ⚠ no detail rows extracted; nothing to push")  # >>> ADDED
@@ -562,7 +622,7 @@ def process_one_folder(folder: Path) -> str:
             print(traceback.format_exc())  # >>> ADDED
 
     meta["results_pushed"] = rp
-    _save_meta(meta_path, meta)
+    save_metadata(folder, meta)
 
     if pushed_any:
         try:
