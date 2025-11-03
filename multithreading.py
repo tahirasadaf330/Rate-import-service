@@ -46,6 +46,7 @@ def cleaned_out_path(p: Path) -> Path:
     """Return <stem>_cleaned<suffix> in the same folder."""
     p = Path(p)
     return p.with_name(f"{p.stem}_cleaned{p.suffix}")
+
 def find_jerasoft_file(folder: Path) -> Optional[Path]:
     """Prefer jerasoft_comparison_all.xlsx, else first *_jerasoft_comparison.xlsx."""
     prime = folder / "jerasoft_comparison_all_cleaned.xlsx"
@@ -58,6 +59,7 @@ def find_jerasoft_file(folder: Path) -> Optional[Path]:
         and p.name.lower().endswith("_jerasoft_comparison_cleaned.xlsx")
     )
     return candidates[0] if candidates else None
+
 def vendor_files(folder: Path) -> list[Path]:
     """
     Return vendor files to compare, preferring *_cleaned.* when both exist.
@@ -104,6 +106,7 @@ def vendor_files(folder: Path) -> list[Path]:
         chosen.append(pair.get("cleaned") or pair.get("raw"))
 
     return sorted(chosen)
+
 def as_of_from_metadata(folder: Path) -> str:
     """Use metadata.date_utc if available, else today (UTC, YYYY-MM-DD)."""
     meta = folder / "metadata.json"
@@ -158,6 +161,7 @@ def read_comparison_table(path: Path) -> pd.DataFrame:
     df["Effective Date"] = pd.to_datetime(df["Effective Date"], errors="coerce", utc=True)
     df.dropna(how="all", inplace=True)
     return df
+
 def df_to_detail_dicts(df: pd.DataFrame) -> List[Dict[str, Any]]:
     details: List[Dict[str, Any]] = []
 
@@ -242,6 +246,7 @@ def compute_upload_stats(dfs: List[pd.DataFrame]) -> Dict[str, int]:
         "backdated_decrease":int(is_back_dec.sum()),
         "billing_increment_changes": bic,
     }
+
 def parse_received_at(meta: Dict[str, Any]) -> Optional[datetime]:
     raw = meta.get("receivedDateTime_raw")
     if isinstance(raw, str) and raw.strip():
@@ -265,24 +270,25 @@ def parse_received_at(meta: Dict[str, Any]) -> Optional[datetime]:
             return None
     return None
 
-def load_metadata(folder: Path) -> Optional[Dict[str, Any]]:
-    meta = folder / "metadata.json"
-    if not meta.exists():
-        return None
-    try:
-        with meta.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return None
-    def save_metadata(folder: Path, data: Dict[str, Any]) -> None:
-    # atomic write to avoid corrupting metadata.json
-     path = folder / "metadata.json"
-    import tempfile, os
-    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", dir=folder) as tmp:
-        json.dump(data, tmp, ensure_ascii=False, indent=2)
-        tmp.flush(); os.fsync(tmp.fileno())
-        tmpname = tmp.name
-    os.replace(tmpname, path)
+# def load_metadata(folder: Path) -> Optional[Dict[str, Any]]:
+#     meta = folder / "metadata.json"
+#     if not meta.exists():
+#         return None
+#     try:
+#         with meta.open("r", encoding="utf-8") as f:
+#             return json.load(f)
+#     except Exception:
+#         return None
+    
+#     def save_metadata(folder: Path, data: Dict[str, Any]) -> None:
+#     # atomic write to avoid corrupting metadata.json
+#      path = folder / "metadata.json"
+#     import tempfile, os
+#     with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", dir=folder) as tmp:
+#         json.dump(data, tmp, ensure_ascii=False, indent=2)
+#         tmp.flush(); os.fsync(tmp.fileno())
+#         tmpname = tmp.name
+#     os.replace(tmpname, path)
     
 def _has_ct(df: pd.DataFrame, label: str) -> pd.Series:
     pat = re.compile(BOUND.format(label=re.escape(label)), flags=re.IGNORECASE)

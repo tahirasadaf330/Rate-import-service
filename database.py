@@ -838,7 +838,7 @@ def mark_processing_stage(
 ) -> int:
     """
     Status rules:
-      - Any stage set to FALSE  -> status='fail'   (no prereq gating)
+      - Any stage set to FALSE  -> status='failed'   (no prereq gating)
       - Any stage set to TRUE (but not rate_uploaded) -> status='processing'
       - rate_uploaded set to TRUE -> status='success'
     """
@@ -858,7 +858,7 @@ def mark_processing_stage(
 
     # ---- Immediate failure (no gating) ----
     if final_status is False:
-        set_bits += [f"{col} = FALSE", "status = 'fail'"]
+        set_bits += [f"{col} = FALSE", "status = 'failed'"]
         sql = f"UPDATE processing_statuses SET {', '.join(set_bits)} WHERE {where_key_sql}"
         with get_conn() as conn, conn.cursor() as cur:
             cur.execute(sql, where_key_args)
@@ -880,7 +880,7 @@ def mark_processing_stage(
         # While progressing through earlier stages, show 'processing'
         # but don't overwrite a terminal state if it's already there.
         set_bits.append(
-            "status = CASE WHEN status IN ('fail','success') THEN status ELSE 'processing' END"
+            "status = CASE WHEN status IN ('failed','success') THEN status ELSE 'processing' END"
         )
 
     sql = f"UPDATE processing_statuses SET {', '.join(set_bits)} WHERE {where_sql}"
