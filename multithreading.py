@@ -305,6 +305,17 @@ def process_one_folder(folder: Path) -> str:
     """
     meta_path = folder / "metadata.json"
     meta = load_metadata(folder)
+    # Immediately reflect a previous export error in flags to avoid “processing” limbo
+    if meta.get("keyword_error") and not meta.get("jerasoft_preprocessed"):
+        meta["jerasoft_preprocessed"] = False
+        meta["final_ok"] = False
+        save_metadata(folder, meta)
+        try:
+            mark_processing_stage(directory_name=folder.name, stage="jera_fetched", final_status=False)
+
+        except Exception as e:
+            print(f"[{folder.name}] stage warn (jera_failed reconcile): {e}")
+
     if not meta:
         return f"[{folder.name}] skip: no/invalid metadata.json"
 
@@ -333,12 +344,29 @@ def process_one_folder(folder: Path) -> str:
             info = export_rates_by_query(company, output_path, subject, prefix_code=prefix)
         except Exception as e:
             meta["keyword_error"] = str(e)
+            meta["jerasoft_preprocessed"] = False        # <<< flag explicitly false
+            meta["need_human_eval_jerasoft"] = True
+            meta["final_ok"] = False                     # <<< prevent “processing” limbo
             save_metadata(folder, meta)
+            try:
+                mark_processing_stage(directory_name=folder.name, stage="jera_fetched", final_status=False)
+
+            except Exception as e2:
+                print(f"[{folder.name}] stage warn (jera_failed): {e2}")
             return f"[{folder.name}] ✖ export failed: {e}"
+
 
         if isinstance(info, str):
             meta["keyword_error"] = info
+            meta["jerasoft_preprocessed"] = False        # <<< flag explicitly false
+            meta["need_human_eval_jerasoft"] = True
+            meta["final_ok"] = False                     # <<< prevent “processing” limbo
             save_metadata(folder, meta)
+            try:
+                mark_processing_stage(directory_name=folder.name, stage="jera_fetched", final_status=False)
+
+            except Exception as e2:
+                print(f"[{folder.name}] stage warn (jera_failed): {e2}")
             return f"[{folder.name}] export error: {info}"
 
         # Success: count rows, set flags
@@ -411,12 +439,19 @@ def process_one_folder(folder: Path) -> str:
             jera_flags = [v for name, v in pre_map.items() if "jerasoft" in name.lower()]
             vendor_flags = [v for name, v in pre_map.items() if "jerasoft" not in name.lower()]
 
-            # Flag is false if any file in either group is False
-            jera_failed = any(not v for v in jera_flags)
+            # Fail if any JeraSoft file failed OR if there were none at all
+            jera_failed = (len(jera_flags) == 0) or any(not v for v in jera_flags)
+
+            # Vendors can be required or optional. If required, uncomment the next line:
+            # vendor_failed = (len(vendor_flags) == 0) or any(not v for v in vendor_flags)
+            # If optional, keep your original:
             vendor_failed = any(not v for v in vendor_flags)
 
-            # Final status depends on if there is any failure in either group
             final_ok = not (jera_failed or vendor_failed)
+
+            # keep jera flag in metadata consistent
+            meta["jerasoft_preprocessed"] = not jera_failed
+
 
             meta["final_ok"] = final_ok
             save_metadata(folder, meta)
