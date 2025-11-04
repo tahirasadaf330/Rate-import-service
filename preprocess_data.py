@@ -354,14 +354,16 @@ def _read_raw_matrix(path: str, sheet=0) -> pd.DataFrame:
                     dbg(f"[excel-fallback] pandas read failed on sheet #{j}: {e}")
             return None
 
+        best_partial = None  # (sheet_index, covered_count, missing_list)
+
         for i in try_order:
             raw_stream = _raw_from_ws(wb.worksheets[i])
 
-            # Fallback trigger BEFORE header detection if the streaming read seems too short
+            # Prefer pandas if streaming looks suspiciously small
             chosen = raw_stream
             if raw_stream.shape[0] < ROW_FALLBACK_THRESHOLD:
                 try:
-                    raw_pd = _raw_from_excel_pandas(path, i)  # same sheet index
+                    raw_pd = _raw_from_excel_pandas(path, i)
                     if raw_pd.shape[0] > raw_stream.shape[0]:
                         dbg(f"[excel-fallback] streaming rows={raw_stream.shape[0]} < {ROW_FALLBACK_THRESHOLD}; "
                             f"pandas rows={raw_pd.shape[0]} -> using pandas for sheet #{i}")
@@ -372,28 +374,63 @@ def _read_raw_matrix(path: str, sheet=0) -> pd.DataFrame:
                 except Exception as e:
                     dbg(f"[excel-fallback] pandas read failed on sheet #{i}: {e}")
 
+            # Must find a header row first
             try:
-                print('\n\nDEBUG: Calling the detect header row function from read_raw_matrix\n\n')
-                _ = detect_header_row(chosen)  # will raise if not found
-                wb.close()
-                print("\n\nDEBUG: Gotcha using the read excel openpyxl method")
-                return chosen  # this sheet has the headers; use it
+                dbg('\n\nDEBUG: Calling the detect header row function from read_raw_matrix\n\n')
+                header_idx = detect_header_row(chosen)  # may raise ValueError (no full header)
             except ValueError:
-                print("\n\nDEBUG: Failed the detect_header_row check")
-                # don’t return yet; try other sheets
-                continue
+                dbg("\n\nDEBUG: Failed the detect_header_row check")
+                continue  # try next sheet
 
-        # If we exhausted all openpyxl sheets without finding headers, try pandas across all sheets
-        dbg("[excel] openpyxl could not find headers on any sheet → trying pandas across all sheets")
+            # Build a temp DF with headers and verify canonical/required columns
+            header_values = list(chosen.iloc[header_idx].fillna('').astype(str))
+            df_tmp = chosen.iloc[header_idx+1:].copy()
+            df_tmp.columns = header_values
+            df_tmp.dropna(how="all", inplace=True)
+            df_tmp.dropna(axis=1, how="all", inplace=True)
+            df_tmp.reset_index(drop=True, inplace=True)
+
+            try:
+                # If this succeeds, REQUIRED_COLS are satisfied (with your BI tolerance).
+                _ = _canonicalize_headers(df_tmp.copy())
+                wb.close()
+                dbg("\n\nDEBUG: Sheet accepted after canonicalization\n\n")
+                return chosen  # ✅ full match on this sheet
+            except ValueError as e:
+                # Partial hit: remember the best to aid debugging if everything fails.
+                # Try to estimate coverage count by lightly normalizing the column names.
+                cols_norm = {_norm(_preclean_header_token(c)) for c in df_tmp.columns}
+                covered = 0
+                for req in REQUIRED_COLS:
+                    if req == 'Billing Increment':
+                        # tolerate BI via pairs/singles (same as your header detectors)
+                        has = any(
+                            a in cols_norm and b in cols_norm
+                            for (a, b) in BILLING_PAIRS
+                        ) or any(k in cols_norm for k in ['initial_period','min_bill','first_increment','increment'])
+                        if has:
+                            covered += 1
+                    else:
+                        if _norm(req) in cols_norm:
+                            covered += 1
+                missing_hint = [c for c in REQUIRED_COLS if _norm(c) not in cols_norm]
+                if (best_partial is None) or (covered > best_partial[1]):
+                    best_partial = (i, covered, missing_hint)
+                dbg(f"[excel] canonicalization missing on sheet #{i}; covered={covered}, missing={missing_hint}. Trying next sheet.")
+
+        # If no sheet fully satisfied the requirements via openpyxl, try pandas across all sheets.
+        dbg("[excel] openpyxl could not find a fully valid sheet → trying pandas across all sheets")
         raw_pd_any = _try_pandas_all_sheets()
         wb.close()
         if raw_pd_any is not None:
             return raw_pd_any
 
+        # Nothing worked: surface a helpful error with the best partial sheet
+        if best_partial:
+            idx, cov, miss = best_partial
+            raise ValueError(f"No sheet contains all required headers. Best partial was sheet #{idx} "
+                             f"covering {cov}/{len(REQUIRED_COLS)}; missing: {miss}.")
         raise ValueError("No sheet contains all required headers (openpyxl and pandas fallbacks failed).")
-    else:
-        # Non-Excel → treat as CSV/TSV/etc.
-        return pd.read_csv(path, header=None, dtype=str)
 
 # In the detect_header_row function:
 def detect_header_row(raw: pd.DataFrame) -> int:
@@ -1122,7 +1159,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
 
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\20251028000317_51558_25029.xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\AllIP_Rates_Hayo_Telecom_INC_CLI_November_07_2025.xlsx"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
