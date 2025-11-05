@@ -954,7 +954,7 @@ def insert_invalid_subject_detail(invalid_subject_id: int,
     sql = """
         INSERT INTO invalid_subject_details (invalid_subject_id, subject, jera_table, created_at)
         VALUES (%s, %s, %s, NOW())
-        ON CONFLICT (invalid_subject_id, subject) DO UPDATE SET
+        (invalid_subject_id, subject) DO UPDATE SET
           jera_table = COALESCE(EXCLUDED.jera_table, invalid_subject_details.jera_table)
         RETURNING id
     """
