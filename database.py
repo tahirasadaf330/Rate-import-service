@@ -948,21 +948,38 @@ def get_or_create_invalid_subject(email: str,
         conn.commit()
         return int(rid)
 
-def insert_invalid_subject_detail(invalid_subject_id: int,
-                                  subject: str,
-                                  jera_table: Optional[str] = None) -> int:
+# def insert_invalid_subject_detail(invalid_subject_id: int,
+#                                   subject: str,
+#                                   jera_table: Optional[str] = None) -> int:
+#     sql = """
+#         INSERT INTO invalid_subject_details (invalid_subject_id, subject, jera_table, created_at)
+#         VALUES (%s, %s, %s, NOW())
+#         (invalid_subject_id, subject) DO UPDATE SET
+#           jera_table = COALESCE(EXCLUDED.jera_table, invalid_subject_details.jera_table)
+#         RETURNING id
+#     """
+#     with get_conn() as conn, conn.cursor() as cur:
+#         cur.execute(sql, (invalid_subject_id, subject, jera_table))
+#         rid = cur.fetchone()[0]
+#         conn.commit()
+#         return int(rid)
+
+def insert_invalid_subject_detail(
+    invalid_subject_id: int,
+    subject: str,
+    jera_table: Optional[str] = None
+) -> int:
     sql = """
         INSERT INTO invalid_subject_details (invalid_subject_id, subject, jera_table, created_at)
         VALUES (%s, %s, %s, NOW())
-        (invalid_subject_id, subject) DO UPDATE SET
-          jera_table = COALESCE(EXCLUDED.jera_table, invalid_subject_details.jera_table)
-        RETURNING id
+        RETURNING id;
     """
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, (invalid_subject_id, subject, jera_table))
         rid = cur.fetchone()[0]
         conn.commit()
         return int(rid)
+
 
 def find_invalid_subject_detail(invalid_subject_id: int, subject: str) -> Optional[Tuple[int, Optional[str]]]:
     """
