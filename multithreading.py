@@ -17,6 +17,7 @@ from database import (
     bulk_insert_rate_upload_details,
     mark_processing_stage,
 )
+from jerasoft import export_rates_by_query, get_table_id_by_name, fetch_active_current_future_rates, save_rates_to_excel
 
 # Reuse constants from your code
 ALLOWED_EXTS = {".xlsx", ".xls", ".csv"}
@@ -312,16 +313,19 @@ def process_one_folder(folder: Path) -> str:
         return f"[{folder.name}] skip: waiting for date verification approval"
 
     # -------- 1) JeraSoft export (if needed) --------
+    
     if not bool(meta.get("jerasoft_preprocessed")):
-        company = meta.get("company")
-        subject = meta.get("subject")
-        prefix  = meta.get("prefix")
-        dir_path = meta.get("directory")
+        company     = (meta.get("company") or "").strip()
+        subject     = (meta.get("subject") or "").strip()
+        prefix      = meta.get("prefix")
+        dir_path    = meta.get("directory")
         attachments = meta.get("attachments", [])
+        force_table = (meta.get("force_jerasoft_table_name") or "").strip()
 
         if not dir_path or not attachments:
             return f"[{folder.name}] skip: missing directory/attachments info"
 
+        # choose output filename
         if len(attachments) == 1:
             base_name = Path(attachments[0]).stem
             output_file = f"{base_name}_jerasoft_comparison.xlsx"
@@ -330,38 +334,63 @@ def process_one_folder(folder: Path) -> str:
         output_path = str(Path(dir_path) / output_file)
 
         try:
-            info = export_rates_by_query(company, output_path, subject, prefix_code=prefix)
+            if force_table:
+                # Override path: resolve table by exact name and export directly
+                tid = get_table_id_by_name(force_table)
+                if not tid:
+                    raise RuntimeError(f"JeraSoft table not found: {force_table}")
+
+                js_df    = fetch_active_current_future_rates(table_id=int(tid))
+                saved_to = save_rates_to_excel(js_df, output_path)
+
+                rows_js = int(js_df.shape[0]) if hasattr(js_df, "shape") else 0
+                meta["best_table_name"] = force_table
+
+            else:
+                # Normal path: build a safe non-empty target_query (fallback to subject if needed)
+                bad_kw = {"", "a-z", "rates", "rate", "pricing", "update", "standard", "retail"}
+                target_query = company if company.lower() not in bad_kw and len(company) >= 3 else subject
+                if not target_query:
+                    target_query = subject
+
+                info = export_rates_by_query(
+                    target_query=target_query,
+                    output_path=output_path,
+                    subject=subject,
+                    prefix_code=prefix,
+                )
+                if isinstance(info, str):
+                    # export_rates_by_query returns a string on error
+                    meta["keyword_error"] = info
+                    save_metadata(folder, meta)
+                    return f"[{folder.name}] export error: {info}"
+
+                # read back the file for row count
+                rows_js = 0
+                try:
+                    ext = Path(output_path).suffix.lower()
+                    df_js = pd.read_excel(output_path) if ext in (".xlsx", ".xls") else pd.read_csv(output_path)
+                    rows_js = int(df_js.shape[0])
+                except Exception:
+                    pass
+
+                meta["best_table_name"] = info.get("best_table_name")
+
+            # common metadata after either path
+            meta["human_eval_details_jerasoft"] = {"file": Path(output_path).name, "rows": rows_js}
+            meta["need_human_eval_jerasoft"] = bool(meta.get("need_human_eval_jerasoft")) or (rows_js < 100)
+            meta["jerasoft_preprocessed"] = True
+            save_metadata(folder, meta)
+
+            try:
+                mark_processing_stage(directory_name=folder.name, stage="jera_fetched")
+            except Exception as e:
+                print(f"[{folder.name}] stage warn (jera_fetched): {e}")
+
         except Exception as e:
             meta["keyword_error"] = str(e)
             save_metadata(folder, meta)
             return f"[{folder.name}] ✖ export failed: {e}"
-
-        if isinstance(info, str):
-            meta["keyword_error"] = info
-            save_metadata(folder, meta)
-            return f"[{folder.name}] export error: {info}"
-
-        # Success: count rows, set flags
-        rows_js = 0
-        try:
-            ext = Path(output_path).suffix.lower()
-            df_js = pd.read_excel(output_path) if ext in (".xlsx", ".xls") else pd.read_csv(output_path)
-            rows_js = int(df_js.shape[0])
-        except Exception:
-            pass
-
-        if info:
-            meta["best_table_name"] = info.get("best_table_name")
-        meta["human_eval_details_jerasoft"] = {"file": Path(output_path).name, "rows": rows_js}
-        meta["need_human_eval_jerasoft"] = bool(meta.get("need_human_eval_jerasoft")) or (rows_js < 100)
-        meta["jerasoft_preprocessed"] = True
-        save_metadata(folder, meta)
-
-        try:
-            mark_processing_stage(directory_name=folder.name, stage="jera_fetched")
-        except Exception as e:
-            # just log
-            print(f"[{folder.name}] stage warn (jera_fetched): {e}")
 
     # -------- 2) Cleaning (if needed) --------
     # we consider "needed" if metadata has no 'preprocessed_results' or it's empty

@@ -921,3 +921,62 @@ def get_processing_status(
             "created_at","updated_at",
         ]
         return dict(zip(keys, row))
+# ===== Invalid Subject helpers =====
+from typing import Optional, Tuple
+from datetime import datetime
+
+def get_or_create_invalid_subject(email: str,
+                                  received_at: Optional[datetime] = None,
+                                  processed_at: Optional[datetime] = None,
+                                  status: str = "pending") -> int:
+    """
+    Ensure there is exactly one invalid_subjects row for this email.
+    Returns its id.
+    """
+    sel = "SELECT id FROM invalid_subjects WHERE email = %s"
+    ins = """
+        INSERT INTO invalid_subjects (email, received_at, processed_at, status, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, NOW(), NOW())
+        ON CONFLICT (email) DO UPDATE SET
+          received_at = COALESCE(EXCLUDED.received_at, invalid_subjects.received_at),
+          processed_at = COALESCE(EXCLUDED.processed_at, invalid_subjects.processed_at),
+          updated_at = NOW()
+        RETURNING id
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sel, (email,))
+        row = cur.fetchone()
+        if row:
+            return int(row[0])
+        cur.execute(ins, (email, received_at, processed_at, status))
+        rid = cur.fetchone()[0]
+        conn.commit()
+        return int(rid)
+
+def insert_invalid_subject_detail(invalid_subject_id: int,
+                                  subject: str,
+                                  jera_table: Optional[str] = None) -> int:
+    sql = """
+        INSERT INTO invalid_subject_details (invalid_subject_id, subject, jera_table, created_at)
+        VALUES (%s, %s, %s, NOW())
+        ON CONFLICT (invalid_subject_id, subject) DO UPDATE SET
+          jera_table = COALESCE(EXCLUDED.jera_table, invalid_subject_details.jera_table)
+        RETURNING id
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (invalid_subject_id, subject, jera_table))
+        rid = cur.fetchone()[0]
+        conn.commit()
+        return int(rid)
+
+def find_invalid_subject_detail(invalid_subject_id: int, subject: str) -> Optional[Tuple[int, Optional[str]]]:
+    """
+    Return (detail_id, jera_table) if present for this subject; else None.
+    """
+    sql = "SELECT id, jera_table FROM invalid_subject_details WHERE invalid_subject_id = %s AND subject = %s"
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (invalid_subject_id, subject))
+        row = cur.fetchone()
+        if row:
+            return int(row[0]), (row[1] if row[1] is not None else None)
+        return None
