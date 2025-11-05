@@ -387,7 +387,26 @@ def export_rates_by_query(
     print(f"DEBUG: Best table: ID={table_id} NAME='{best_table.get('name')}' SCORE={top_scored[0][0]:.3f}")
 
     df = fetch_active_current_future_rates(table_id=table_id, api_url=api_url, api_key=api_key)
-    ...
+    print(f"DEBIG: Fetched {df.shape[0]} active current & future rates.")
+
+    saved_to = save_rates_to_excel(df, output_path)
+
+    result = {
+        "table_id": table_id,
+        "rows": int(df.shape[0]),
+        "saved_to": saved_to,
+    }
+
+    if return_debug:
+        result.update({
+            "best_table_name": best_table.get("name"),
+            "top_candidates": [
+                {"score": round(score, 3), "id": t.get("id"), "name": t.get("name")}
+                for score, t in top_scored
+            ],
+        })
+
+    return result
 
 if __name__ == "__main__":
     # Example quick-start (reads API key from env):

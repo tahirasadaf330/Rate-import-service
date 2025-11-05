@@ -9,6 +9,7 @@ import json
 from psycopg2.extras import execute_values, Json 
 from pathlib import Path
 from typing import Optional
+from typing import Optional, Tuple
 
 
 # Load environment variables
@@ -828,7 +829,6 @@ def ensure_row_by_directory(
         conn.commit()
         return rid
 
-
 def mark_processing_stage(
     *,
     directory_name: Optional[str] = None,
@@ -890,9 +890,6 @@ def mark_processing_stage(
         conn.commit()
         return affected
 
-
-
-
 def get_processing_status(
     *, directory_name: Optional[str] = None, internet_message_id: Optional[str] = None
 ) -> Optional[dict]:
@@ -922,8 +919,6 @@ def get_processing_status(
         ]
         return dict(zip(keys, row))
 # ===== Invalid Subject helpers =====
-from typing import Optional, Tuple
-from datetime import datetime
 
 def get_or_create_invalid_subject(email: str,
                                   received_at: Optional[datetime] = None,
