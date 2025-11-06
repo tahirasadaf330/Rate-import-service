@@ -882,7 +882,7 @@ def verify_fetch_emails(after: str, before: str, unread_only: bool = True) -> No
     verified_set = {e.lower().strip() for e in verified_senders}
    
     page_size = 50                    # number of messages per API call
-    filetypes = ".csv,.xlsx,.pdf"     # allowed file extensions
+    filetypes = ".csv,.xlsx,.xls"     # allowed file extensions
     attachments_dir = "attachments"   # base directory where attachments are saved
               # only process unread emails
 
