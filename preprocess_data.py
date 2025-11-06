@@ -1079,6 +1079,8 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
 
     # Rate: strip symbols/spaces and coerce to float
     s = df['Rate'].astype(str).str.strip()
+    # replace comma with 
+    s = s.str.replace(',', '.', regex=False)
     s = (s
          .str.replace(r'[\$\£\€]', '', regex=True)
          .str.replace(r'\s+', '', regex=True))
@@ -1122,7 +1124,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
 
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\20251028000317_51558_25029.xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Desktop\projects\rate-import-service\attachments\rates_at_evox.fr_20251106_091941\CPL_HAYOTEL_DEU-2025116-43120_.xls"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
