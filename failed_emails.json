@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "last_updated_utc": "2025-11-06T11:04:29Z",
+  "last_updated_utc": "2025-11-06T13:54:20Z",
   "totals": {
-    "unverified_sender": 78,
-    "subject_invalid": 2,
+    "unverified_sender": 123,
+    "subject_invalid": 4,
     "no_attachments": 0,
     "no_valid_attachments": 0,
-    "all": 80
+    "all": 127
   },
   "buckets": {
     "unverified_sender": [
@@ -945,6 +945,546 @@
           "verified_list_size": 0
         },
         "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtNAAA=",
+        "internetMessageId": "<2aa2f481-2897-43e3-8f09-76195ae30987@GLOAWSEXC05.GBR.lebara>",
+        "sender": "fahri.degirmenci@lebara.com",
+        "subject": "Lebara offers to Hayo EUR",
+        "receivedDateTime": "2025-11-06T11:41:23Z",
+        "logged_at_utc": "2025-11-06T11:42:53Z",
+        "details": {
+          "verified_list_size": 0
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtMAAA=",
+        "internetMessageId": "<007b01dc4f11$d0554600$70ffd200$@lensol.biz>",
+        "sender": "info@lensol.biz",
+        "subject": "RE: HAYO FULL A-Z REPLACE ORIG GOLD LENSOL'S LLC PREFIX:10778",
+        "receivedDateTime": "2025-11-06T11:38:10Z",
+        "logged_at_utc": "2025-11-06T11:42:53Z",
+        "details": {
+          "verified_list_size": 0
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtLAAA=",
+        "internetMessageId": "<856105072.1762428985719.JavaMail.VSNL/costing.rates.new@uswv1vxap054a>",
+        "sender": "donotreply@tatacommunications.com",
+        "subject": "HAYO FULL A-Z REPLACE ORIG PLATINUM TATA COMMUNICATIONS (CANADA) LTD PREFIX:NONE HAYO Telecom (CMS ID: 41960)",
+        "receivedDateTime": "2025-11-06T11:36:32Z",
+        "logged_at_utc": "2025-11-06T11:42:53Z",
+        "details": {
+          "verified_list_size": 0
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtKAAA=",
+        "internetMessageId": "<401848814.1762428975825.JavaMail.VSNL/costing.rates.new@uswv1vxap054a>",
+        "sender": "donotreply@tatacommunications.com",
+        "subject": "HAYO FULL A-Z REPLACE ORIG GOLD TATA COMMUNICATIONS (CANADA) LTD PREFIX:NONE HAYO Telecom (CMS ID: 66914)",
+        "receivedDateTime": "2025-11-06T11:36:20Z",
+        "logged_at_utc": "2025-11-06T11:42:53Z",
+        "details": {
+          "verified_list_size": 0
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtJAAA=",
+        "internetMessageId": "<007a01dc4f11$5ad74d10$1085e730$@lensol.biz>",
+        "sender": "info@lensol.biz",
+        "subject": "RE: HAYO FULL A-Z REPLACE ORIG PLATINUM LENSOL'S LLC PREFIX:10777",
+        "receivedDateTime": "2025-11-06T11:34:52Z",
+        "logged_at_utc": "2025-11-06T11:42:53Z",
+        "details": {
+          "verified_list_size": 0
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtIAAA=",
+        "internetMessageId": "<d1b4e6e8-d45e-42fa-8284-d895bffb0a7c_GEN_BY_LMS@cmi.chinamobile.com>",
+        "sender": "voicesellrate@cmi.chinamobile.com",
+        "subject": "China Mobile International Limited Price Changes for Hayo Telecom (Pty) Ltd - R",
+        "receivedDateTime": "2025-11-06T11:34:39Z",
+        "logged_at_utc": "2025-11-06T11:42:53Z",
+        "details": {
+          "verified_list_size": 0
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtHAAA=",
+        "internetMessageId": "<202511061121.5A6BLGna029358@sgixlplrmail01.live.ixlink.com>",
+        "sender": "notification@live.ixlink.com",
+        "subject": "iXLink: Successful Delivery of the price list  from Hayo Telecom to PLDT Global Corporation ([20251106111839724][USA_HAYT-PHL_PGC][PL][USD][HAYO_PGC_PRM])",
+        "receivedDateTime": "2025-11-06T11:23:30Z",
+        "logged_at_utc": "2025-11-06T11:42:53Z",
+        "details": {
+          "verified_list_size": 0
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtGAAA=",
+        "internetMessageId": "<202511061120.5A6BKGex028530@sgixlplrmail01.live.ixlink.com>",
+        "sender": "notification@live.ixlink.com",
+        "subject": "iXLink: Price list Received from Hayo Telecom to PLDT Global Corporation ([20251106111839724][USA_HAYT-PHL_PGC][PL][USD][HAYO_PGC_PRM])",
+        "receivedDateTime": "2025-11-06T11:22:21Z",
+        "logged_at_utc": "2025-11-06T11:42:53Z",
+        "details": {
+          "verified_list_size": 0
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtFAAA=",
+        "internetMessageId": "<VI1PR07MB987449E2A1D8425A8DF83D9793C2A@VI1PR07MB9874.eurprd07.prod.outlook.com>",
+        "sender": "tariq.chaudhry@tisparkle.com",
+        "subject": "BILLING INCREMENT CHANGE -    DD +58412 VENEZUELA DIGITEL-RM",
+        "receivedDateTime": "2025-11-06T11:19:19Z",
+        "logged_at_utc": "2025-11-06T11:42:53Z",
+        "details": {
+          "verified_list_size": 0
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtEAAA=",
+        "internetMessageId": "<20251106111850.B581710002E93@inpost.tmes-sg.trendmicro.com>",
+        "sender": "no-reply@tmes-sg.trendmicro.com",
+        "subject": "Undeliverable: HAYO FULL A-Z REPLACE ORIG PLATINUM PLDT (HK) LIMITED PREFIX:10751 [USA_HAYT-PHL_PGC][PL][USD][HAYO_PGC_PRM],[A-Z]",
+        "receivedDateTime": "2025-11-06T11:18:57Z",
+        "logged_at_utc": "2025-11-06T11:42:53Z",
+        "details": {
+          "verified_list_size": 0
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtDAAA=",
+        "internetMessageId": "<202511061103.5A6B386W020404@sgixlplrmail01.live.ixlink.com>",
+        "sender": "notification@live.ixlink.com",
+        "subject": "iXLink: Successful Delivery of the price list with Auto-Adjusted Effective Dates  from Hayo Telecom to iBasis inc ([20251106091844418][USA_HAYT-USA_IBAS][PL][USD][26944])",
+        "receivedDateTime": "2025-11-06T11:05:34Z",
+        "logged_at_utc": "2025-11-06T11:42:53Z",
+        "details": {
+          "verified_list_size": 0
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtCAAA=",
+        "internetMessageId": "<VI1PR07MB987492928BD482F32D29812093C2A@VI1PR07MB9874.eurprd07.prod.outlook.com>",
+        "sender": "tariq.chaudhry@tisparkle.com",
+        "subject": "AGCOM Resolution 106/25/CIR: New Verification and Blocking Rules for International Calls to Italy",
+        "receivedDateTime": "2025-11-06T11:04:34Z",
+        "logged_at_utc": "2025-11-06T11:42:53Z",
+        "details": {
+          "verified_list_size": 0
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtOAAA=",
+        "internetMessageId": "<373264590.1762429392370.JavaMail.VSNL/costing.rates.new@uswv1vxap054a>",
+        "sender": "rateadmin@proof.tatacommunications.com",
+        "subject": "Tata Communications REFLEX confirmation HAYO TELECOM, INC.(VTSPRIME), CMS ID: 41960",
+        "receivedDateTime": "2025-11-06T11:43:27Z",
+        "logged_at_utc": "2025-11-06T11:43:35Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtQAAA=",
+        "internetMessageId": "<1028928850.1762429416046.JavaMail.VSNL/costing.rates.new@uswv1vxap054a>",
+        "sender": "rateadmin@proof.tatacommunications.com",
+        "subject": "Tata Communications REFLEX confirmation HAYO TELECOM, INC.(VTSPREF - Terminator), CMS ID: 66914",
+        "receivedDateTime": "2025-11-06T11:43:54Z",
+        "logged_at_utc": "2025-11-06T11:44:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtPAAA=",
+        "internetMessageId": "<333ed5d6-951b-4445-b8ed-557dff8fd119@GLOAWSEXC05.GBR.lebara>",
+        "sender": "fahri.degirmenci@lebara.com",
+        "subject": "Lebara offers to Hayo USD",
+        "receivedDateTime": "2025-11-06T11:43:46Z",
+        "logged_at_utc": "2025-11-06T11:44:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtTAAA=",
+        "internetMessageId": "<4d943b3e-f63e-4810-b651-16bd24b02b35_GEN_BY_LMS@cmi.chinamobile.com>",
+        "sender": "voicesellrate@cmi.chinamobile.com",
+        "subject": "China Mobile International Limited Price Changes for Hayo Telecom (Pty) Ltd",
+        "receivedDateTime": "2025-11-06T12:05:54Z",
+        "logged_at_utc": "2025-11-06T12:10:45Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtSAAA=",
+        "internetMessageId": "<b612aee0-50a2-4bfd-9f15-8c2428c1c482_GEN_BY_LMS@cmi.chinamobile.com>",
+        "sender": "voicesellrate@cmi.chinamobile.com",
+        "subject": "China Mobile International Limited Price Changes for Hayo Telecom",
+        "receivedDateTime": "2025-11-06T12:05:54Z",
+        "logged_at_utc": "2025-11-06T12:10:45Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtRAAA=",
+        "internetMessageId": "<fd48eb12-8fed-4de7-ae29-a032e7b90bb0@CY8PR10MB6683.namprd10.prod.outlook.com>",
+        "sender": "microsoftexchange329e71ec88ae4615bbc36ab6ce41109e@kingrevolution.com",
+        "subject": "Undeliverable: HAYO FULL A-Z REPLACE ORIG PLATINUM AD VENTURES GLOBAL PREFIX:11142",
+        "receivedDateTime": "2025-11-06T12:03:25Z",
+        "logged_at_utc": "2025-11-06T12:10:45Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtZAAA=",
+        "internetMessageId": "<1908488118.1939.1762431981272@rating-db3.bts.io>",
+        "sender": "pricing@bts.io",
+        "subject": "BTS RATE NOTIFICATION HAYOTEL CC",
+        "receivedDateTime": "2025-11-06T12:26:59Z",
+        "logged_at_utc": "2025-11-06T12:30:49Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtYAAA=",
+        "internetMessageId": "<137301020.1567.1762431909087@rating-db3.bts.io>",
+        "sender": "pricing@bts.io",
+        "subject": "BTS RATE AMENDMENT NOTIFICATION. HAYO TELECOM INC",
+        "receivedDateTime": "2025-11-06T12:26:00Z",
+        "logged_at_utc": "2025-11-06T12:30:49Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtXAAA=",
+        "internetMessageId": "<188468595.893.1762431789202@rating-db3.bts.io>",
+        "sender": "pricing@bts.io",
+        "subject": "BTS RATE AMENDMENT NOTIFICATION. HAYO TELECOM",
+        "receivedDateTime": "2025-11-06T12:23:33Z",
+        "logged_at_utc": "2025-11-06T12:30:49Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtWAAA=",
+        "internetMessageId": "<1997529525.899.1762431791731@rating-db3.bts.io>",
+        "sender": "pricing@bts.io",
+        "subject": "BTS RATE AMENDMENT NOTIFICATION. HAYO TELECOM",
+        "receivedDateTime": "2025-11-06T12:23:32Z",
+        "logged_at_utc": "2025-11-06T12:30:49Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtaAAA=",
+        "internetMessageId": "<973164998.807399.1762432349561@email.ionos.co.uk>",
+        "sender": "rates@directtelco.com",
+        "subject": "HAYO :: CC PARTIAL RATE SHEET || PREFIX 333",
+        "receivedDateTime": "2025-11-06T12:32:39Z",
+        "logged_at_utc": "2025-11-06T12:32:49Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtcAAA=",
+        "internetMessageId": "<009c01dc4f19$f48cb0f0$dda612d0$@ingenuitytelecom.com>",
+        "sender": "sandy@ingenuitytelecom.com",
+        "subject": "RE: HAYO FULL A-Z REPLACE ORIG GOLD INGENUITY TELECOM LLC PREFIX:978#",
+        "receivedDateTime": "2025-11-06T12:36:31Z",
+        "logged_at_utc": "2025-11-06T12:36:32Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtbAAA=",
+        "internetMessageId": "<53361a58-28c9-4ad8-8aaa-165f950a0020@SN1PEPF000252A1.namprd05.prod.outlook.com>",
+        "sender": "rates@ecocarrier.com",
+        "subject": "ECOCARRIER LATEST OFFER RATES TO HAYO TELECOM, INC - FULL REPLACEMENT with Standard Trunk effective immediately November 6, 2025 12:36 GMT",
+        "receivedDateTime": "2025-11-06T12:36:25Z",
+        "logged_at_utc": "2025-11-06T12:36:32Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtlAAA=",
+        "internetMessageId": "<SA1PR10MB75884FC502183DA95610B827E3C2A@SA1PR10MB7588.namprd10.prod.outlook.com>",
+        "sender": "arfan.bhatti@kingrevolution.com",
+        "subject": "Re: RERATE REQUEST.",
+        "receivedDateTime": "2025-11-06T12:53:12Z",
+        "logged_at_utc": "2025-11-06T12:58:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtkAAA=",
+        "internetMessageId": "<BYAPR10MB3045D783EAEE291EA61F2254DDC2A@BYAPR10MB3045.namprd10.prod.outlook.com>",
+        "sender": "afaan@hayo.net",
+        "subject": "Re: RERATE REQUEST.",
+        "receivedDateTime": "2025-11-06T12:48:28Z",
+        "logged_at_utc": "2025-11-06T12:58:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtjAAA=",
+        "internetMessageId": "<DT-DSR-0718tgTOVDKH0002518b@us.mail.digitalkcloud.com>",
+        "sender": "rates@sinpin.com",
+        "subject": "LOOK INTERNATIONAL -  Automated Response:  Price List Received from HAYO to LOOK INTERNATIONAL",
+        "receivedDateTime": "2025-11-06T12:47:59Z",
+        "logged_at_utc": "2025-11-06T12:58:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtiAAA=",
+        "internetMessageId": "<DT-DSR-0718rOc4uusr00025189@us.mail.digitalkcloud.com>",
+        "sender": "rates@sinpin.com",
+        "subject": "LOOK INTERNATIONAL -  Automated Response:  Price List Received from HAYO to LOOK INTERNATIONAL",
+        "receivedDateTime": "2025-11-06T12:47:59Z",
+        "logged_at_utc": "2025-11-06T12:58:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvthAAA=",
+        "internetMessageId": "<008e01dc4f1b$185335d0$48f9a170$@mletatel.com>",
+        "sender": "rates@mletatel.com",
+        "subject": "RE: HAYO FULL A-Z REPLACE ORIG GOLD MLETA TELECOM LTD PREFIX:11139",
+        "receivedDateTime": "2025-11-06T12:46:32Z",
+        "logged_at_utc": "2025-11-06T12:58:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtgAAA=",
+        "internetMessageId": "<008c01dc4f1b$1520ba90$3f622fb0$@mletatel.com>",
+        "sender": "rates@mletatel.com",
+        "subject": "RE: HAYO FULL A-Z REPLACE ORIG PLATINUM MLETA TELECOM LTD PREFIX:11138",
+        "receivedDateTime": "2025-11-06T12:46:27Z",
+        "logged_at_utc": "2025-11-06T12:58:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtfAAA=",
+        "internetMessageId": "<CAJF3Pny6RwmMuQczyOkHj4k6aJeDaDztCw2SUg+xTh5LSNCNLw@mail.gmail.com>",
+        "sender": "kgomez@telvantis.com",
+        "subject": "Re: HAYO FULL A-Z REPLACE ORIG PLATINUMTELVANTIS VOICE SERVICES INC PREFIX:3984",
+        "receivedDateTime": "2025-11-06T12:44:31Z",
+        "logged_at_utc": "2025-11-06T12:58:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvteAAA=",
+        "internetMessageId": "<CAJF3Pnwqxx=C-puF9rPAbHxsWg2w5EkexoWJYuZPPhHQRw_SGg@mail.gmail.com>",
+        "sender": "kgomez@telvantis.com",
+        "subject": "Re: HAYO FULL A-Z REPLACE ORIG SPECIAL TELVANTIS VOICE SERVICES INC PREFIX:5255",
+        "receivedDateTime": "2025-11-06T12:44:19Z",
+        "logged_at_utc": "2025-11-06T12:58:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtdAAA=",
+        "internetMessageId": "<009d01dc4f19$f624dd20$e26e9760$@ingenuitytelecom.com>",
+        "sender": "sandy@ingenuitytelecom.com",
+        "subject": "RE: HAYO FULL A-Z REPLACE ORIG PLATINUM INGENUITY TELECOM LLC PREFIX:548#",
+        "receivedDateTime": "2025-11-06T12:36:35Z",
+        "logged_at_utc": "2025-11-06T12:58:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtmAAA=",
+        "internetMessageId": "<aec89368-c79a-4690-8a5a-c521bc1ca51d@PH7PR10MB7012.namprd10.prod.outlook.com>",
+        "sender": "microsoftexchange329e71ec88ae4615bbc36ab6ce41109e@kingrevolution.com",
+        "subject": "Undeliverable: HAYO FULL A-Z REPLACE ORIG PLATINUM GO4MOBILITY PREFIX:NONE",
+        "receivedDateTime": "2025-11-06T13:03:44Z",
+        "logged_at_utc": "2025-11-06T13:06:11Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtoAAA=",
+        "internetMessageId": "<47362b9b-76a4-43b8-b03e-79d1d744cecd@DS4PPF54BF63015.namprd10.prod.outlook.com>",
+        "sender": "microsoftexchange329e71ec88ae4615bbc36ab6ce41109e@kingrevolution.com",
+        "subject": "Undeliverable: HAYO FULL A-Z REPLACE ORIG GOLD INAANI PTE LTD PREFIX:NONE",
+        "receivedDateTime": "2025-11-06T13:19:42Z",
+        "logged_at_utc": "2025-11-06T13:21:05Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtnAAA=",
+        "internetMessageId": "<86e3a52f-c8f3-4c09-a2a3-9e639ef47b22@CH4PR10MB8122.namprd10.prod.outlook.com>",
+        "sender": "microsoftexchange329e71ec88ae4615bbc36ab6ce41109e@kingrevolution.com",
+        "subject": "Undeliverable: HAYO FULL A-Z REPLACE ORIG PLATINUM INAANI PTE LTD PREFIX:00",
+        "receivedDateTime": "2025-11-06T13:19:36Z",
+        "logged_at_utc": "2025-11-06T13:21:05Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtpAAA=",
+        "internetMessageId": "<PN1P287MB2571EADA19F72394FCF43984D4C2A@PN1P287MB2571.INDP287.PROD.OUTLOOK.COM>",
+        "sender": "rates@bankai.net",
+        "subject": "RE: HAYO FULL A-Z REPLACE ORIG PLATINUM BANKAI INTERNATIONAL PVT LTD PREFIX:10838",
+        "receivedDateTime": "2025-11-06T13:23:34Z",
+        "logged_at_utc": "2025-11-06T13:23:44Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtqAAA=",
+        "internetMessageId": "<PN1P287MB2571900216C6F27C1520B846D4C2A@PN1P287MB2571.INDP287.PROD.OUTLOOK.COM>",
+        "sender": "rates@bankai.net",
+        "subject": "RE: HAYO FULL A-Z REPLACE ORIG GOLD BANKAI INTERNATIONAL PVT LTD PREFIX:10839",
+        "receivedDateTime": "2025-11-06T13:23:47Z",
+        "logged_at_utc": "2025-11-06T13:24:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtrAAA=",
+        "internetMessageId": "<759031262.4969.1762436030737@sun-co-b01>",
+        "sender": "noreply@europeer.de",
+        "subject": "HAYO FULL A-Z REPLACE ORIG CC EUROPEER LTD PREFIX:NONE",
+        "receivedDateTime": "2025-11-06T13:33:57Z",
+        "logged_at_utc": "2025-11-06T13:36:21Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtuAAA=",
+        "internetMessageId": "<DT-DSR-0649Y61LEdyt0001ba6b@mail.digitalkcloud.com>",
+        "sender": "rates@sygmatel.com",
+        "subject": "Rate import status - from Hayo - Gold on 05/11/2025",
+        "receivedDateTime": "2025-11-06T13:39:09Z",
+        "logged_at_utc": "2025-11-06T13:39:53Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvttAAA=",
+        "internetMessageId": "<DT-DSR-0649PQIWDO3h0001ba6a@mail.digitalkcloud.com>",
+        "sender": "rates@sygmatel.com",
+        "subject": "Rate import status - from Hayo - Platinum on 05/11/2025",
+        "receivedDateTime": "2025-11-06T13:39:07Z",
+        "logged_at_utc": "2025-11-06T13:39:53Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtsAAA=",
+        "internetMessageId": "<CAEekJgsEpoMaTRyL+xWTsO+1PwnVAOw=R6va6G-H-vfBqron4w@mail.gmail.com>",
+        "sender": "adrian.popa@vincomm.net",
+        "subject": "[Vinculum Communication][Standard][07820][USD]",
+        "receivedDateTime": "2025-11-06T13:38:56Z",
+        "logged_at_utc": "2025-11-06T13:39:53Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtwAAA=",
+        "internetMessageId": "<00a701dc4f23$a8063120$f8129360$@ics-voice.net>",
+        "sender": "rates@ics-voice.net",
+        "subject": "RE: HAYO FULL A-Z REPLACE ORIG PLATINUM ICS INTERNATIONAL CARRIER SERVICES INC. PREFIX:10890",
+        "receivedDateTime": "2025-11-06T13:45:57Z",
+        "logged_at_utc": "2025-11-06T13:47:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtvAAA=",
+        "internetMessageId": "<00a501dc4f23$a18945d0$e49bd170$@ics-voice.net>",
+        "sender": "rates@ics-voice.net",
+        "subject": "RE: HAYO FULL A-Z REPLACE ORIG GOLD ICS INTERNATIONAL CARRIER SERVICES INC. PREFIX:10891",
+        "receivedDateTime": "2025-11-06T13:45:47Z",
+        "logged_at_utc": "2025-11-06T13:47:29Z",
+        "details": {
+          "verified_list_size": 2
+        },
+        "already_pushed": true
       }
     ],
     "subject_invalid": [
@@ -967,6 +1507,30 @@
         "subject": "Evox Pricelist",
         "receivedDateTime": "2025-11-06T09:19:41Z",
         "logged_at_utc": "2025-11-06T11:04:26Z",
+        "details": {
+          "note": "did not match required fields"
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtUAAA=",
+        "internetMessageId": "<SA1PR10MB66614CF69A876DE78055182BEDC2A@SA1PR10MB6661.namprd10.prod.outlook.com>",
+        "sender": "tahira.sadaf@kingrevolution.com",
+        "subject": "Evox Pricelist",
+        "receivedDateTime": "2025-11-06T12:10:31Z",
+        "logged_at_utc": "2025-11-06T12:10:45Z",
+        "details": {
+          "note": "did not match required fields"
+        },
+        "already_pushed": true
+      },
+      {
+        "id": "AAMkAGY1YmM3YTkwLWE1YTgtNDc5Yi04ZDBmLTEzNjY3Mjc5OTVkOQBGAAAAAADtqXYOa627SJOboz8X1Xh9BwCDEfFXdYRwQa3Wi-6VTNTJAAAAAAEMAACDEfFXdYRwQa3Wi-6VTNTJAAQ6kvtVAAA=",
+        "internetMessageId": "<SA1PR10MB66612B39397C6C98A711A9F3EDC2A@SA1PR10MB6661.namprd10.prod.outlook.com>",
+        "sender": "tahira.sadaf@kingrevolution.com",
+        "subject": "Evox Pricelist",
+        "receivedDateTime": "2025-11-06T12:18:27Z",
+        "logged_at_utc": "2025-11-06T12:18:35Z",
         "details": {
           "note": "did not match required fields"
         },

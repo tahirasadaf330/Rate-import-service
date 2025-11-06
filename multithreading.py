@@ -86,6 +86,8 @@ def vendor_files(folder: Path) -> list[Path]:
             continue
         if is_jerasoft(f):
             continue
+        # if not f.stem.lower().endswith("_cleaned"):
+        #     continue  # ❌ skip non-cleaned vendor files
         candidates.append(f)
 
     # prefer *_cleaned over raw twin
@@ -515,6 +517,8 @@ def process_one_folder(folder: Path) -> str:
                 result, stats = compare(left_df, right_df, as_of_date, 7, 0.0001)
                 out_path = folder / f"{v.stem}_comparision_result.xlsx"
                 write_excel(result, str(out_path))
+                print(f"[{folder.name}] wrote result to {out_path}")
+
                 writes += 1
                 comp_result[vname] = True
 
@@ -527,9 +531,10 @@ def process_one_folder(folder: Path) -> str:
                 }
                 save_metadata(folder, meta)
 
+
             except Exception as e:
                 comp_result[vname] = False
-                print(f"[{folder.name}] compare fail {vname}: {e}")
+                print(f"\n\n\n\n\n[{folder.name}] compare fail {vname}: {e}\n\n\n\n")
 
         if comp_result:
             success_any = any(comp_result.values())
