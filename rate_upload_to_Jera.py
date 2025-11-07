@@ -1,233 +1,208 @@
-#!/usr/bin/env python3
-"""
-Non-destructive connectivity test to JeraSoft:
-- REST: PATCH /rates/tables/{id} to update only the 'tag' field
-- (Optional) JSON-RPC fallback: rates.tables.update
-
-Usage:
-  # PowerShell: set your API key for this session
-  #   $env:JERA_SOFT_API_KEY = "your-key-here"
-  # Run (table 4330, default host)
-  #   python test_push_jerasoft.py
-  #
-  # Custom tag:
-  #   python test_push_jerasoft.py --table-id 4330 --tag "TEST_FROM_SCRIPT"
-  #
-  # Dry run (shows the request only):
-  #   python test_push_jerasoft.py --dry-run
-  #
-  # If your Windows trust store blocks TLS, try:
-  #   python test_push_jerasoft.py --insecure
-"""
-
+# ───────────────────────── Push comparison results to JeraSoft ─────────────────────────
+from typing import Optional, Dict, List, Tuple
+import re
+import pandas as pd
 import os
 import json
-import argparse
-import http.client
-import ssl
-from urllib.parse import urlparse
-from datetime import datetime, timezone
-from datetime import datetime
+import requests
 
-tag_value = f"TEST_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}"
-payload = {"tag": tag_value}
-print("Generated tag:", tag_value)
+# Reuse your existing env vars
+J_API_URL = os.getenv("JERASOFT_API_URL", "http://billing.voipsystem.org:3080")
+J_API_KEY = os.getenv("JERA_SOFT_API_KEY")
 
+# Shared session with retries (optional but recommended)
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+_session_push = requests.Session()
+_session_push.mount("http://", HTTPAdapter(max_retries=Retry(total=4, backoff_factor=0.4, status_forcelist=[502,503,504])))
+_session_push.mount("https://", HTTPAdapter(max_retries=Retry(total=4, backoff_factor=0.4, status_forcelist=[502,503,504])))
 
-try:
-    import certifi  # for a reliable CA bundle on Windows
-    CERT_PATH = certifi.where()
-except Exception:
-    CERT_PATH = None
+def _rpc_call(method: str, params: Dict, api_url: Optional[str] = None) -> Dict:
+    """Low-level JSON-RPC helper."""
+    api_url = api_url or J_API_URL
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    r = _session_push.post(api_url, headers={"Content-Type":"application/json","Accept":"application/json"}, json=payload, timeout=300)
+    r.raise_for_status()
+    data = r.json()
+    if "error" in data and data["error"]:
+        # JeraSoft error comes here
+        raise RuntimeError(f"JeraSoft RPC error in {method}: {json.dumps(data['error'])}")
+    return data.get("result")
 
-DEFAULT_REST_BASE = "https://billing.voipsystem.org"
-DEFAULT_RPC_URL   = "http://billing.voipsystem.org:3080"
-DEFAULT_TABLE_ID  = 4330
+_bi_re = re.compile(r"^\s*(\d+)\s*/\s*(\d+)\s*$")
+def _parse_billing_increment(bi: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
+    """'60/60' -> (60,60); returns (None,None) if blank/invalid."""
+    if not isinstance(bi, str):
+        return None, None
+    m = _bi_re.match(bi.strip())
+    if not m:
+        return None, None
+    return int(m.group(1)), int(m.group(2))
 
-
-def _utc_tag(prefix: str = "TEST") -> str:
-    return f"{prefix}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
-
-
-def rest_patch_table(base_url: str,
-                     api_key: str,
-                     table_id: int,
-                     payload: dict,
-                     dry_run: bool = False,
-                     insecure: bool = False):
-    """
-    PATCH /rates/tables/{id} with http.client, providing proper TLS context.
-    """
-    parsed = urlparse(base_url)
-    if parsed.scheme not in ("https", "http"):
-        raise ValueError(f"Unsupported scheme in base URL: {base_url}")
-
-    host = parsed.netloc or parsed.path
-    path = f"/rates/tables/{table_id}"
-
-    body = json.dumps(payload)
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "X-Api-Key": api_key,
-    }
-
-    print("\n[REST] PATCH request")
-    print("  Host:", host)
-    print("  Path:", path)
-    print("  Headers:", {k: ("<hidden>" if k.lower().startswith("x-api-key") else v) for k, v in headers.items()})
-    print("  Body:", body)
-
-    if dry_run:
-        print("  (dry-run) Skipping network call.")
-        return None, None, None
-
-    if parsed.scheme == "https":
-        if insecure:
-            ctx = ssl._create_unverified_context()
-        else:
-            ctx = ssl.create_default_context(cafile=CERT_PATH) if CERT_PATH else ssl.create_default_context()
-        conn = http.client.HTTPSConnection(host, timeout=60, context=ctx)
-    else:
-        conn = http.client.HTTPConnection(host, timeout=60)
-
-    try:
-        conn.request("PATCH", path, body=body, headers=headers)
-        res = conn.getresponse()
-        data = res.read()
-        print("\n[REST] Response")
-        print("  Status:", res.status, res.reason)
+def _fmt_date(d: object) -> Optional[str]:
+    """Accepts datetime/str; returns 'YYYY-MM-DD' or None."""
+    if d is None or (isinstance(d, float) and pd.isna(d)):
+        return None
+    if isinstance(d, str):
+        d = d.strip()
+        if not d:
+            return None
         try:
-            decoded = data.decode("utf-8", errors="replace")
-            print("  Body:", json.dumps(json.loads(decoded), indent=2))
+            return str(pd.to_datetime(d, errors="coerce").date())
         except Exception:
-            print("  Body (raw):", data[:1000])
-        return res.status, res.reason, data
-    finally:
-        conn.close()
-
-
-def rpc_update_table(rpc_url: str,
-                     api_key: str,
-                     table_id: int,
-                     tag_value: str,
-                     dry_run: bool = False,
-                     insecure: bool = False):
-    """
-    JSON-RPC fallback to rates.tables.update (matches your jerasoft.py style).
-    """
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "rates.tables.update",
-        "params": {
-            "AUTH": api_key,
-            "id": int(table_id),
-            "tag": tag_value,
-        },
-    }
-
-    parsed = urlparse(rpc_url)
-    if parsed.scheme not in ("https", "http"):
-        raise ValueError(f"Unsupported scheme in rpc URL: {rpc_url}")
-
-    host = parsed.netloc or parsed.path
-    path = parsed.path or "/"
-
-    body = json.dumps(payload)
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-    print("\n[JSON-RPC] POST request")
-    print("  Host:", host)
-    print("  Path:", path)
-    print("  Body:", body)
-
-    if dry_run:
-        print("  (dry-run) Skipping network call.")
-        return None, None, None
-
-    if parsed.scheme == "https":
-        if insecure:
-            ctx = ssl._create_unverified_context()
-        else:
-            ctx = ssl.create_default_context(cafile=CERT_PATH) if CERT_PATH else ssl.create_default_context()
-        conn = http.client.HTTPSConnection(host, timeout=60, context=ctx)
-    else:
-        conn = http.client.HTTPConnection(host, timeout=60)
-
+            return None
     try:
-        conn.request("POST", path, body=body, headers=headers)
-        res = conn.getresponse()
-        data = res.read()
-        print("\n[JSON-RPC] Response")
-        print("  Status:", res.status, res.reason)
+        return str(pd.to_datetime(d, errors="coerce").date())
+    except Exception:
+        return None
+
+def _search_rate_id(table_id: int, code: str, effective_from: str, api_url: Optional[str]=None) -> Optional[int]:
+    """
+    Find an existing rate row id by table + code + effective_from.
+    Returns None if not found.
+    """
+    params = {
+        "AUTH": J_API_KEY,
+        "rate_tables_id": table_id,
+        "code": code,
+        "effective_from": effective_from,
+        "state": "all",
+        "status": "all",
+        "limit": 1,
+        "offset": 0,
+    }
+    res = _rpc_call("rates.search", params, api_url=api_url)
+    if isinstance(res, list) and res:
+        rid = res[0].get("id")
+        return int(rid) if rid is not None else None
+    return None
+
+def _create_rate(table_id: int, code: str, value: float, eff: str,
+                 min_vol: Optional[int], pay_int: Optional[int],
+                 api_url: Optional[str]=None) -> int:
+    """Create a rate row and return its id."""
+    params = {
+        "AUTH": J_API_KEY,
+        "rate_tables_id": table_id,
+        "code": str(code),
+        "effective_from": eff,
+        "value": float(value),
+        "status": "active",
+    }
+    if min_vol is not None: params["min_volume"] = int(min_vol)
+    if pay_int is not None: params["pay_interval"] = int(pay_int)
+    res = _rpc_call("rates.create", params, api_url=api_url)
+    rid = res.get("id") if isinstance(res, dict) else None
+    if rid is None:
+        raise RuntimeError(f"rates.create returned no id: {res}")
+    return int(rid)
+
+def _update_rate(rate_id: int, value: Optional[float]=None,
+                 min_vol: Optional[int]=None, pay_int: Optional[int]=None,
+                 status: Optional[str]=None, api_url: Optional[str]=None) -> None:
+    """Update a rate row by id (only provided fields are changed)."""
+    params = {"AUTH": J_API_KEY, "id": int(rate_id)}
+    if value is not None:    params["value"] = float(value)
+    if min_vol is not None:  params["min_volume"] = int(min_vol)
+    if pay_int is not None:  params["pay_interval"] = int(pay_int)
+    if status is not None:   params["status"] = status
+    _ = _rpc_call("rates.update", params, api_url=api_url)
+
+def push_comparison_to_jerasoft(df: pd.DataFrame,
+                                table_id: int,
+                                *,
+                                api_url: Optional[str]=None,
+                                api_key: Optional[str]=None,
+                                accepted_statuses: Tuple[str, ...]=("Accepted",),
+                                create_if_missing: bool=True,
+                                update_if_exists: bool=True,
+                                dry_run: bool=False) -> Dict[str,int]:
+    """
+    Push comparison results into a JeraSoft rate table (upsert).
+    Expects columns:
+      'Code', 'New Rate', 'Effective Date', 'New Billing Increment' (optional), 'Status' (optional)
+
+    Only rows with Status ∈ accepted_statuses are uploaded.
+
+    Returns a summary dict.
+    """
+    if api_key:
+        # allow overriding process-wide key
+        global J_API_KEY
+        J_API_KEY = api_key
+
+    if not J_API_KEY:
+        raise ValueError("Missing JERA_SOFT_API_KEY (env) or pass api_key=)")
+
+    req_cols = ["Code","New Rate","Effective Date"]
+    for c in req_cols:
+        if c not in df.columns:
+            raise ValueError(f"Missing required column in DataFrame: {c}")
+
+    summary = {"processed": 0, "created": 0, "updated": 0, "skipped_status": 0, "skipped_invalid": 0, "errors": 0}
+
+    for idx, row in df.iterrows():
+        summary["processed"] += 1
+
+        # Filter by status (optional)
+        if "Status" in df.columns and accepted_statuses:
+            st = str(row.get("Status") or "").strip()
+            if st not in accepted_statuses:
+                summary["skipped_status"] += 1
+                continue
+
+        code = str(row.get("Code") or "").strip()
+        rate = row.get("New Rate")
+        eff  = _fmt_date(row.get("Effective Date"))
+        bi   = row.get("New Billing Increment")
+        mv, pi = _parse_billing_increment(bi)
+
+        if not code or eff is None:
+            summary["skipped_invalid"] += 1
+            continue
         try:
-            decoded = data.decode("utf-8", errors="replace")
-            print("  Body:", json.dumps(json.loads(decoded), indent=2))
+            rate = float(rate)
         except Exception:
-            print("  Body (raw):", data[:1000])
-        return res.status, res.reason, data
-    finally:
-        conn.close()
+            summary["skipped_invalid"] += 1
+            continue
 
+        if dry_run:
+            print(f"[DRY-RUN] upsert code={code} eff={eff} rate={rate} min_vol={mv} pay_int={pi}")
+            continue
 
-def main():
-    ap = argparse.ArgumentParser(description="Test pushing to JeraSoft (safe tag update).")
-    ap.add_argument("--table-id", type=int, default=DEFAULT_TABLE_ID, help="Rate table ID to patch (default: 4330)")
-    ap.add_argument("--rest-base", default=DEFAULT_REST_BASE, help="REST base URL (default: https://billing.voipsystem.org)")
-    ap.add_argument("--rpc-url", default=os.getenv("JERASOFT_RPC_URL", DEFAULT_RPC_URL), help="JSON-RPC URL (optional fallback)")
-    ap.add_argument("--tag", default=None, help="Tag to set; default = TEST_<UTC timestamp>")
-    ap.add_argument("--dry-run", action="store_true", help="Print the request but do not send")
-    ap.add_argument("--no-rpc", action="store_true", help="Skip JSON-RPC fallback")
-    ap.add_argument("--insecure", action="store_true", help="Bypass TLS verification (NOT for production)")
-    args = ap.parse_args()
-
-    api_key = os.getenv("JERA_SOFT_API_KEY")
-    if not api_key:
-        raise SystemExit("Missing env var JERA_SOFT_API_KEY")
-
-    tag_value = args.tag or _utc_tag("TEST")
-
-    # REST (doc-style)
-    try:
-        rest_status, _, _ = rest_patch_table(
-            base_url=args.rest_base,
-            api_key=api_key,
-            table_id=args.table_id,
-            payload={"tag": tag_value},
-            dry_run=args.dry_run,
-            insecure=args.insecure,
-        )
-    except Exception as e:
-        print(f"\n[REST] Error: {e}")
-        rest_status = None
-
-    # JSON-RPC fallback
-    rpc_status = None
-    if not args.no_rpc:
         try:
-            rpc_status, _, _ = rpc_update_table(
-                rpc_url=args.rpc_url,
-                api_key=api_key,
-                table_id=args.table_id,
-                tag_value=tag_value,
-                dry_run=args.dry_run,
-                insecure=args.insecure,
-            )
+            rid = _search_rate_id(table_id, code, eff, api_url=api_url)
+
+            if rid is None:
+                if not create_if_missing:
+                    summary["skipped_invalid"] += 1
+                    continue
+                _ = _create_rate(table_id, code, rate, eff, mv, pi, api_url=api_url)
+                summary["created"] += 1
+            else:
+                if update_if_exists:
+                    _update_rate(rid, value=rate, min_vol=mv, pay_int=pi, api_url=api_url)
+                    summary["updated"] += 1
+                else:
+                    # exists but we chose not to update
+                    pass
+
         except Exception as e:
-            print(f"\n[JSON-RPC] Error: {e}")
-            rpc_status = None
+            summary["errors"] += 1
+            print(f"[push-error] row #{idx} code={code} eff={eff}: {e}")
 
-    print("\n=== SUMMARY ===")
-    print("REST status:", rest_status)
-    print("RPC status :", rpc_status)
-    print("Tag tested :", tag_value)
-    if rest_status == 200 and rpc_status == 200:
-        print("Note: If you see a JSON-RPC error like 'tag-already_assigned', the table is assigned and JeraSoft blocks tag changes. Try another field or an unassigned table for this test.")
+    return summary
 
 
-if __name__ == "__main__":
-    main()
+
+
+table_id = 1234  # your target table
+summary = push_comparison_to_jerasoft(
+    cmp_df,
+    table_id=table_id,
+    accepted_statuses=("Accepted",),  # only push Accepted rows
+    create_if_missing=True,           # create missing rates
+    update_if_exists=True,            # update if already present
+    dry_run=False                     # set True to preview without writing
+)
+print("Upload summary:", summary)

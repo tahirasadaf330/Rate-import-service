@@ -43,10 +43,18 @@ def save_metadata(folder: Path, data: Dict[str, Any]) -> None:
         tmpname = tmp.name
     os.replace(tmpname, path)
 
+# def cleaned_out_path(p: Path) -> Path:
+#     """Return <stem>_cleaned<suffix> in the same folder."""
+#     p = Path(p)
+#     return p.with_name(f"{p.stem}_cleaned{p.suffix}")
+
 def cleaned_out_path(p: Path) -> Path:
-    """Return <stem>_cleaned<suffix> in the same folder."""
+    """Return <stem>_cleaned.xlsx in the same folder (force xlsx)."""
     p = Path(p)
-    return p.with_name(f"{p.stem}_cleaned{p.suffix}")
+    base = p.with_suffix(".xlsx")
+    return base.with_name(f"{base.stem}_cleaned.xlsx")
+
+
 
 def find_jerasoft_file(folder: Path) -> Optional[Path]:
     """Prefer jerasoft_comparison_all.xlsx, else first *_jerasoft_comparison.xlsx."""
@@ -478,14 +486,44 @@ def process_one_folder(folder: Path) -> str:
     # -------- 3) Comparison (if needed) --------
     meta = load_metadata(folder) or {}
     if "comparision_result" not in (meta.keys()):
-        pre_map = meta.get("preprocessed_results", {}) or {}
+        # pre_map = meta.get("preprocessed_results", {}) or {}
+
+        pre_map_raw = meta.get("preprocessed_results") or {}
+        pre_map = {k.lower(): v for k, v in pre_map_raw.items()}
+
         left_path = find_jerasoft_file(folder)
+
+        print(f"[{folder.name}] DEBUG: baseline file chosen = {left_path.name!r}")
+        print(f"[{folder.name}] DEBUG: pre_map keys ({len(pre_map)}): {[k for k in pre_map.keys()]}")
+        for k in pre_map.keys():
+            print(f"[{folder.name}] DEBUG: compare key={k!r} == left? {k == left_path.name}  "
+                f"len(key)={len(k)} len(left)={len(left_path.name)}")
+
+        print(f"[{folder.name}] DEBUG: baseline file chosen = {left_path}")
+        print(f"[{folder.name}] DEBUG: baseline file chosen = {left_path.name}")
+     
+        print(f"[{folder.name}] DEBUG: pre_map keys = {list(pre_map.keys())[:50]}")
+        print(f"[{folder.name}] DEBUG: exact match? {left_path.name in pre_map}")
+        print(f"[{folder.name}] DEBUG: pre_map[left] = {pre_map.get(left_path.name)}")
+        print(f"[{folder.name}] DEBUG: lower match? {left_path.name.lower() in {k.lower(): v for k,v in pre_map.items()}}")
+
         if not left_path:
             meta["comparision_result"] = {"result": "comparison skipped: no baseline file found"}
             save_metadata(folder, meta)
             return f"[{folder.name}] skip compare: no baseline"
 
-        baseline_ok = bool(pre_map.get(left_path.name))
+        # baseline_ok = bool(pre_map.get(left_path.name))
+        def norm(s: str) -> str: return s.strip().casefold()
+        pre_map_ci = {norm(k): v for k, v in (meta.get("preprocessed_results") or {}).items()}
+        lp = left_path.name
+        lp_n = norm(lp)
+        raw_n = norm(lp.replace("_cleaned.xlsx", ".xlsx")) if lp_n.endswith("_cleaned.xlsx") else lp_n
+        baseline_ok = bool(pre_map_ci.get(lp_n) or pre_map_ci.get(raw_n))
+
+
+
+
+
         if not baseline_ok:
             meta["comparision_result"] = {"result": "comparison skipped: comparison file failed preprocessing"}
             save_metadata(folder, meta)
@@ -507,11 +545,48 @@ def process_one_folder(folder: Path) -> str:
 
         comp_result: Dict[str, bool] = {}
         writes = 0
+        # for v in vfiles:
+        #     vname = v.name
+        #     if not pre_map.get(vname):
+        #         comp_result[vname] = False
+        #         continue
+        #     try:
+        #         right_df = read_table(str(v), None)
+        #         result, stats = compare(left_df, right_df, as_of_date, 7, 0.0001)
+        #         out_path = folder / f"{v.stem}_comparision_result.xlsx"
+        #         write_excel(result, str(out_path))
+        #         print(f"[{folder.name}] wrote result to {out_path}")
+
+        #         writes += 1
+        #         comp_result[vname] = True
+
+        #         meta.setdefault("attachment_stats", {})
+        #         meta["attachment_stats"][v.name] = {
+        #             **stats,
+        #             "source_attachment": v.name,
+        #             "result_file": out_path.name,
+        #             "generated_at_utc": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        #         }
+        #         save_metadata(folder, meta)
+
+        
+        
+        def _norm(s: str) -> str:
+            return s.strip().casefold()
+
+# reuse the case-insensitive map you already build above:
+# pre_map_ci = { _norm(k): v }  (it already exists in your code)
+
         for v in vfiles:
             vname = v.name
-            if not pre_map.get(vname):
+            vkey  = _norm(vname)
+            raw_v = vkey.replace("_cleaned.xlsx", ".xlsx") if vkey.endswith("_cleaned.xlsx") else vkey
+            vendor_ok = bool(pre_map_ci.get(vkey) or pre_map_ci.get(raw_v))
+            if not vendor_ok:
+                print(f"[{folder.name}] compare skip {vname}: not preprocessed (have keys={list(pre_map_ci.keys())})")
                 comp_result[vname] = False
                 continue
+
             try:
                 right_df = read_table(str(v), None)
                 result, stats = compare(left_df, right_df, as_of_date, 7, 0.0001)
@@ -532,12 +607,14 @@ def process_one_folder(folder: Path) -> str:
                 save_metadata(folder, meta)
 
 
+
             except Exception as e:
                 comp_result[vname] = False
                 print(f"\n\n\n\n\n[{folder.name}] compare fail {vname}: {e}\n\n\n\n")
 
         if comp_result:
             success_any = any(comp_result.values())
+            print(f"\n\nDEBUG: Putting comparision result in the metadata file \n\n")
             meta["comparision_result"] = {"result": "ok" if success_any else "no comparisons succeeded", **comp_result}
         else:
             meta["comparision_result"] = {"result": "no eligible vendor files"}
