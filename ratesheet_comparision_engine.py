@@ -19,7 +19,9 @@ OUT_COLS = [
 
 def read_table(path: str, sheet: Optional[str] = None) -> pd.DataFrame:
     ext = os.path.splitext(path)[1].lower()
-    if ext in [".xlsx", ".xls"]:
+    if ext in [".xls"]:
+        df = pd.read_excel(path, engine="calamine")
+    elif ext in [".xlsx"]:
         df = pd.read_excel(path)
     elif ext in [".csv", ".txt"]:
         df = pd.read_csv(path)
@@ -309,3 +311,33 @@ def write_excel(df: pd.DataFrame, path: str) -> None:
         ws = writer.sheets["comparison"]
         ws.autofilter(0, 0, max(0, len(df)), max(0, df.shape[1]-1))
         ws.freeze_panes(1, 0)
+
+
+# --- test runner ---
+if __name__ == "__main__":
+    # Example usage for testing
+    old_file = r"C:\Users\Tahira Sadaf\Desktop\projects\rate-import-service\attachments\tahira.sadaf_at_kingrevolution.com_20251106_121031\CPL_HAYOTEL_DEU-2025116-43120__cleaned.xlsx"
+    new_file = r"C:\Users\Tahira Sadaf\Desktop\projects\rate-import-service\attachments\tahira.sadaf_at_kingrevolution.com_20251106_121031\CPL_HAYOTEL_DEU-2025116-43120_jerasoft_comparison_cleaned.xlsx"
+    output_file = "comparison_output.xlsx"
+
+    # Read inputs
+    left_df = read_table(old_file)
+    right_df = read_table(new_file)
+
+    # Compare (tweak params as needed)
+    result_df, stats = compare(
+        left_df,
+        right_df,
+        as_of_date="2025-11-06",
+        notice_days=7,
+        rate_tol=0.0001,
+    )
+
+    # Show summary
+    print("\n=== Summary Stats ===")
+    for k, v in stats.items():
+        print(f"{k}: {v}")
+
+    # Write output
+    write_excel(result_df, output_file)
+    print(f"\n✅ Comparison complete. Results saved to: {output_file}")

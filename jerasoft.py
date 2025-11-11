@@ -205,6 +205,45 @@ def find_best_term_table(
         raise KeyError("Best table did not include an 'id' field")
 
     return int(best_id), best_table, scored[:top_k]
+def get_table_id_by_name(
+    table_name: str,
+    api_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> Optional[int]:
+    """
+    Look up a Jerasoft rate table ID by its exact name (case-insensitive).
+    Returns the table ID if found, otherwise None.
+
+    Example:
+        tid = get_table_id_by_name("TERM Quickcom tel PRM trunk Prefix:1001 USD")
+    """
+    api_url = api_url or DEFAULT_API_URL
+    api_key = api_key or DEFAULT_API_KEY
+    if not api_key:
+        raise ValueError("Missing API key (env JERA_SOFT_API_KEY or pass api_key).")
+
+    # We'll reuse your fetch_all_tables for reliability
+    tables = fetch_all_tables(api_url=api_url, api_key=api_key)
+    normalized_target = normalize(table_name)
+
+    for t in tables:
+        if normalize(t.get("name", "")) == normalized_target:
+            return t.get("id")
+
+    # If no exact match, optionally try fuzzy match
+    best_match = max(
+        ((fuzzy_score(table_name, t.get("name", "")), t) for t in tables),
+        key=lambda x: x[0],
+        default=(0, None),
+    )
+
+    if best_match[0] > 0.9:  # strong fuzzy match threshold
+        print(f"⚠️ No exact match, using fuzzy match with score={best_match[0]:.3f}")
+        return best_match[1].get("id")
+
+    print(f"❌ Table '{table_name}' not found.")
+    return None
+
 
 def fetch_active_current_future_rates(
     table_id: int,
@@ -327,29 +366,27 @@ def export_rates_by_query(
     api_url: Optional[str] = None,
     api_key: Optional[str] = None,
     return_debug: bool = True,
+    force_table_name: Optional[str] = None,   # <-- NEW
 ) -> Dict:
-    """
-    High-level convenience function.
+    # If a specific table name is approved/forced, use it directly.
+    if force_table_name:
+        tid = get_table_id_by_name(force_table_name, api_url=api_url, api_key=api_key)
+        if not tid:
+            return f"Forced table '{force_table_name}' not found."
+        best_table = {"id": tid, "name": force_table_name}
+        top_scored = [(1.0, best_table)]
+        table_id = tid
+    else:
+        table_id, best_table, top_scored = find_best_term_table(
+            target_query=target_query, api_url=api_url, api_key=api_key,
+            subject=subject, prefix_code=prefix_code
+        )
+        if best_table == "" and top_scored == "":
+            return table_id  # string error from find_best_term_table
 
-    1) Find best TERM* table for `target_query`.
-    2) Fetch active current & future rates for that table.
-    3) Save to `output_path`.
-
-    Returns a dict with summary info.
-    """
-    table_id, best_table, top_scored = find_best_term_table(
-        target_query=target_query, api_url=api_url, api_key=api_key, subject=subject, prefix_code=prefix_code
-    )
-
-    if best_table == "" and top_scored == "":
-        return table_id # error message from find_best_term_table
-    
     print(f"DEBUG: Best table: ID={table_id} NAME='{best_table.get('name')}' SCORE={top_scored[0][0]:.3f}")
 
-    df = fetch_active_current_future_rates(
-        table_id=table_id, api_url=api_url, api_key=api_key
-    )
-
+    df = fetch_active_current_future_rates(table_id=table_id, api_url=api_url, api_key=api_key)
     print(f"DEBIG: Fetched {df.shape[0]} active current & future rates.")
 
     saved_to = save_rates_to_excel(df, output_path)

@@ -655,7 +655,11 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
             has_attachments = bool(m.get("hasAttachments"))
             is_unread = not m.get("isRead")
 
-            # 1) unread gate (no logging here; you asked to track four specific reasons only)
+            # ensure this exists for later metadata (even if not used)
+            override_table_name: Optional[str] = None
+            source = "regex"
+
+            # 1) unread gate
             if unread_only and not is_unread:
                 print("  -> skip: message is read but unread_only=True")
                 skipped_read += 1
@@ -679,13 +683,13 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
                     print(f"(warn) failed to update failed_emails.json: {e}", file=sys.stderr)
                 continue
 
-            # 3) subject invalid
+            # 3) subject invalid → DB handling/override support
             parsed = validate_subject(subject)
-            source = "regex"
             if not parsed:
-                print(f"  -> skip: subject does not match required fields: {subject!r}")
+                print(f"  -> subject does not match required fields: {subject!r}")
+                # JSON logs you already have
                 try:
-                    log_failed_subject(sender, subject)  # your existing per-sender subject log
+                    log_failed_subject(sender, subject)
                 except Exception as e:
                     print(f"  (warn) failed to log failed subject: {e}", file=sys.stderr)
                 skipped_subject += 1
@@ -701,7 +705,45 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
                     })
                 except Exception as e:
                     print(f"(warn) failed to update failed_emails.json: {e}", file=sys.stderr)
-                continue
+
+                # DB flow: allow override if approved
+                try:
+                    from database import (
+                        get_or_create_invalid_subject,
+                        insert_invalid_subject_detail,
+                        find_invalid_subject_detail,
+                    )
+                    try:
+                        rcvd_dt = datetime.fromisoformat((dt_str or "").replace("Z","+00:00")) if dt_str else None
+                    except Exception:
+                        rcvd_dt = None
+
+                    parent_id = get_or_create_invalid_subject(
+                        email=sender or "",
+                        received_at=rcvd_dt,
+                        processed_at=datetime.now(timezone.utc),
+                        status="pending"
+                    )
+
+                    found = find_invalid_subject_detail(parent_id, subject)
+                    if found:
+                        detail_id, jera_table_name = found
+                        if jera_table_name:
+                            # APPROVED via override → proceed normally (do NOT continue)
+                            override_table_name = jera_table_name
+                            print(f"  -> override APPROVED via invalid_subject_details id={detail_id}, table={jera_table_name}")
+                        else:
+                            print(f"  -> subject already logged but no JeraSoft table yet; waiting for approval")
+                            continue  # still pending approval
+                    else:
+                        # New subject for this sender → record & wait for approval
+                        _ = insert_invalid_subject_detail(parent_id, subject, None)
+                        print(f"  -> logged new invalid subject for approval")
+                        continue
+
+                except Exception as e:
+                    print(f"(warn) invalid-subject DB handling failed: {e}", file=sys.stderr)
+                    continue  # fail-safe: skip for now
 
             # 4) no attachments flag
             if not has_attachments:
@@ -721,8 +763,7 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
                     print(f"(warn) failed to update failed_emails.json: {e}", file=sys.stderr)
                 continue
 
-            # ... create save_dir, etc. unchanged ...
-            # Passed sender, subject and has_attachments checks = a matched message
+            # --- Passed sender, subject (or approved override), and has_attachments ---
             matched_messages += 1
 
             # Directory name from sender + UTC timestamp
@@ -745,8 +786,7 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
                 skipped_existing_dir += 1
                 continue
 
-
-            # Save attachments  (function now returns skip_details)
+            # Save attachments
             saved_any, considered_count, skipped_count, saved_files, skip_details = save_matching_attachments_for_user(
                 session, user_email, msg_id, allowed_exts, save_dir
             )
@@ -756,8 +796,7 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
             if not saved_any:
                 print("  -> skip: no attachment passed extension/size checks")
                 skipped_ext += 1
-
-                # clean empty dir as before
+                # clean empty dir
                 try:
                     if os.path.isdir(save_dir) and not os.listdir(save_dir):
                         os.rmdir(save_dir)
@@ -792,8 +831,8 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
             meta = {
                 "subject": subject,
                 "sender": sender,
-                "company": parsed.get("company"),
-                "prefix": parsed.get("prefix"),
+                "company": (parsed.get("company") if parsed else None),
+                "prefix": (parsed.get("prefix") if parsed else None),
                 "date_utc": date_only,
                 "time_utc": time_only,
                 "directory": os.path.abspath(save_dir),
@@ -804,6 +843,9 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
                 "processed_at_utc": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
                 "subject_parsing_source": source
             }
+            if override_table_name:
+                meta["force_jerasoft_table_name"] = override_table_name  # <-- NEW
+
             write_metadata(save_dir, meta)
 
             print("\n✅ VERIFIED EMAIL (with allowed attachment)")
@@ -840,7 +882,7 @@ def verify_fetch_emails(after: str, before: str, unread_only: bool = True) -> No
     verified_set = {e.lower().strip() for e in verified_senders}
    
     page_size = 50                    # number of messages per API call
-    filetypes = ".csv,.xlsx,.pdf"     # allowed file extensions
+    filetypes = ".csv,.xlsx,.xls"     # allowed file extensions
     attachments_dir = "attachments"   # base directory where attachments are saved
               # only process unread emails
 

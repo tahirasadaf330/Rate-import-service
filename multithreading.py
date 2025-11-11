@@ -17,6 +17,7 @@ from database import (
     bulk_insert_rate_upload_details,
     mark_processing_stage,
 )
+from jerasoft import export_rates_by_query, get_table_id_by_name, fetch_active_current_future_rates, save_rates_to_excel
 
 # Reuse constants from your code
 ALLOWED_EXTS = {".xlsx", ".xls", ".csv"}
@@ -42,10 +43,18 @@ def save_metadata(folder: Path, data: Dict[str, Any]) -> None:
         tmpname = tmp.name
     os.replace(tmpname, path)
 
+# def cleaned_out_path(p: Path) -> Path:
+#     """Return <stem>_cleaned<suffix> in the same folder."""
+#     p = Path(p)
+#     return p.with_name(f"{p.stem}_cleaned{p.suffix}")
+
 def cleaned_out_path(p: Path) -> Path:
-    """Return <stem>_cleaned<suffix> in the same folder."""
+    """Return <stem>_cleaned.xlsx in the same folder (force xlsx)."""
     p = Path(p)
-    return p.with_name(f"{p.stem}_cleaned{p.suffix}")
+    base = p.with_suffix(".xlsx")
+    return base.with_name(f"{base.stem}_cleaned.xlsx")
+
+
 
 def find_jerasoft_file(folder: Path) -> Optional[Path]:
     """Prefer jerasoft_comparison_all.xlsx, else first *_jerasoft_comparison.xlsx."""
@@ -85,6 +94,8 @@ def vendor_files(folder: Path) -> list[Path]:
             continue
         if is_jerasoft(f):
             continue
+        # if not f.stem.lower().endswith("_cleaned"):
+        #     continue  # ❌ skip non-cleaned vendor files
         candidates.append(f)
 
     # prefer *_cleaned over raw twin
@@ -305,17 +316,6 @@ def process_one_folder(folder: Path) -> str:
     """
     meta_path = folder / "metadata.json"
     meta = load_metadata(folder)
-    # Immediately reflect a previous export error in flags to avoid “processing” limbo
-    if meta.get("keyword_error") and not meta.get("jerasoft_preprocessed"):
-        meta["jerasoft_preprocessed"] = False
-        meta["final_ok"] = False
-        save_metadata(folder, meta)
-        try:
-            mark_processing_stage(directory_name=folder.name, stage="jera_fetched", final_status=False)
-
-        except Exception as e:
-            print(f"[{folder.name}] stage warn (jera_failed reconcile): {e}")
-
     if not meta:
         return f"[{folder.name}] skip: no/invalid metadata.json"
 
@@ -323,16 +323,19 @@ def process_one_folder(folder: Path) -> str:
         return f"[{folder.name}] skip: waiting for date verification approval"
 
     # -------- 1) JeraSoft export (if needed) --------
+    
     if not bool(meta.get("jerasoft_preprocessed")):
-        company = meta.get("company")
-        subject = meta.get("subject")
-        prefix  = meta.get("prefix")
-        dir_path = meta.get("directory")
+        company     = (meta.get("company") or "").strip()
+        subject     = (meta.get("subject") or "").strip()
+        prefix      = meta.get("prefix")
+        dir_path    = meta.get("directory")
         attachments = meta.get("attachments", [])
+        force_table = (meta.get("force_jerasoft_table_name") or "").strip()
 
         if not dir_path or not attachments:
             return f"[{folder.name}] skip: missing directory/attachments info"
 
+        # choose output filename
         if len(attachments) == 1:
             base_name = Path(attachments[0]).stem
             output_file = f"{base_name}_jerasoft_comparison.xlsx"
@@ -341,55 +344,63 @@ def process_one_folder(folder: Path) -> str:
         output_path = str(Path(dir_path) / output_file)
 
         try:
-            info = export_rates_by_query(company, output_path, subject, prefix_code=prefix)
+            if force_table:
+                # Override path: resolve table by exact name and export directly
+                tid = get_table_id_by_name(force_table)
+                if not tid:
+                    raise RuntimeError(f"JeraSoft table not found: {force_table}")
+
+                js_df    = fetch_active_current_future_rates(table_id=int(tid))
+                saved_to = save_rates_to_excel(js_df, output_path)
+
+                rows_js = int(js_df.shape[0]) if hasattr(js_df, "shape") else 0
+                meta["best_table_name"] = force_table
+
+            else:
+                # Normal path: build a safe non-empty target_query (fallback to subject if needed)
+                bad_kw = {"", "a-z", "rates", "rate", "pricing", "update", "standard", "retail"}
+                target_query = company if company.lower() not in bad_kw and len(company) >= 3 else subject
+                if not target_query:
+                    target_query = subject
+
+                info = export_rates_by_query(
+                    target_query=target_query,
+                    output_path=output_path,
+                    subject=subject,
+                    prefix_code=prefix,
+                )
+                if isinstance(info, str):
+                    # export_rates_by_query returns a string on error
+                    meta["keyword_error"] = info
+                    save_metadata(folder, meta)
+                    return f"[{folder.name}] export error: {info}"
+
+                # read back the file for row count
+                rows_js = 0
+                try:
+                    ext = Path(output_path).suffix.lower()
+                    df_js = pd.read_excel(output_path) if ext in (".xlsx", ".xls") else pd.read_csv(output_path)
+                    rows_js = int(df_js.shape[0])
+                except Exception:
+                    pass
+
+                meta["best_table_name"] = info.get("best_table_name")
+
+            # common metadata after either path
+            meta["human_eval_details_jerasoft"] = {"file": Path(output_path).name, "rows": rows_js}
+            meta["need_human_eval_jerasoft"] = bool(meta.get("need_human_eval_jerasoft")) or (rows_js < 100)
+            meta["jerasoft_preprocessed"] = True
+            save_metadata(folder, meta)
+
+            try:
+                mark_processing_stage(directory_name=folder.name, stage="jera_fetched")
+            except Exception as e:
+                print(f"[{folder.name}] stage warn (jera_fetched): {e}")
+
         except Exception as e:
             meta["keyword_error"] = str(e)
-            meta["jerasoft_preprocessed"] = False        # <<< flag explicitly false
-            meta["need_human_eval_jerasoft"] = True
-            meta["final_ok"] = False                     # <<< prevent “processing” limbo
             save_metadata(folder, meta)
-            try:
-                mark_processing_stage(directory_name=folder.name, stage="jera_fetched", final_status=False)
-
-            except Exception as e2:
-                print(f"[{folder.name}] stage warn (jera_failed): {e2}")
             return f"[{folder.name}] ✖ export failed: {e}"
-
-
-        if isinstance(info, str):
-            meta["keyword_error"] = info
-            meta["jerasoft_preprocessed"] = False        # <<< flag explicitly false
-            meta["need_human_eval_jerasoft"] = True
-            meta["final_ok"] = False                     # <<< prevent “processing” limbo
-            save_metadata(folder, meta)
-            try:
-                mark_processing_stage(directory_name=folder.name, stage="jera_fetched", final_status=False)
-
-            except Exception as e2:
-                print(f"[{folder.name}] stage warn (jera_failed): {e2}")
-            return f"[{folder.name}] export error: {info}"
-
-        # Success: count rows, set flags
-        rows_js = 0
-        try:
-            ext = Path(output_path).suffix.lower()
-            df_js = pd.read_excel(output_path) if ext in (".xlsx", ".xls") else pd.read_csv(output_path)
-            rows_js = int(df_js.shape[0])
-        except Exception:
-            pass
-
-        if info:
-            meta["best_table_name"] = info.get("best_table_name")
-        meta["human_eval_details_jerasoft"] = {"file": Path(output_path).name, "rows": rows_js}
-        meta["need_human_eval_jerasoft"] = bool(meta.get("need_human_eval_jerasoft")) or (rows_js < 100)
-        meta["jerasoft_preprocessed"] = True
-        save_metadata(folder, meta)
-
-        try:
-            mark_processing_stage(directory_name=folder.name, stage="jera_fetched")
-        except Exception as e:
-            # just log
-            print(f"[{folder.name}] stage warn (jera_fetched): {e}")
 
     # -------- 2) Cleaning (if needed) --------
     # we consider "needed" if metadata has no 'preprocessed_results' or it's empty
@@ -439,19 +450,12 @@ def process_one_folder(folder: Path) -> str:
             jera_flags = [v for name, v in pre_map.items() if "jerasoft" in name.lower()]
             vendor_flags = [v for name, v in pre_map.items() if "jerasoft" not in name.lower()]
 
-            # Fail if any JeraSoft file failed OR if there were none at all
-            jera_failed = (len(jera_flags) == 0) or any(not v for v in jera_flags)
-
-            # Vendors can be required or optional. If required, uncomment the next line:
-            # vendor_failed = (len(vendor_flags) == 0) or any(not v for v in vendor_flags)
-            # If optional, keep your original:
+            # Flag is false if any file in either group is False
+            jera_failed = any(not v for v in jera_flags)
             vendor_failed = any(not v for v in vendor_flags)
 
+            # Final status depends on if there is any failure in either group
             final_ok = not (jera_failed or vendor_failed)
-
-            # keep jera flag in metadata consistent
-            meta["jerasoft_preprocessed"] = not jera_failed
-
 
             meta["final_ok"] = final_ok
             save_metadata(folder, meta)
@@ -482,14 +486,44 @@ def process_one_folder(folder: Path) -> str:
     # -------- 3) Comparison (if needed) --------
     meta = load_metadata(folder) or {}
     if "comparision_result" not in (meta.keys()):
-        pre_map = meta.get("preprocessed_results", {}) or {}
+        # pre_map = meta.get("preprocessed_results", {}) or {}
+
+        pre_map_raw = meta.get("preprocessed_results") or {}
+        pre_map = {k.lower(): v for k, v in pre_map_raw.items()}
+
         left_path = find_jerasoft_file(folder)
+
+        print(f"[{folder.name}] DEBUG: baseline file chosen = {left_path.name!r}")
+        print(f"[{folder.name}] DEBUG: pre_map keys ({len(pre_map)}): {[k for k in pre_map.keys()]}")
+        for k in pre_map.keys():
+            print(f"[{folder.name}] DEBUG: compare key={k!r} == left? {k == left_path.name}  "
+                f"len(key)={len(k)} len(left)={len(left_path.name)}")
+
+        print(f"[{folder.name}] DEBUG: baseline file chosen = {left_path}")
+        print(f"[{folder.name}] DEBUG: baseline file chosen = {left_path.name}")
+     
+        print(f"[{folder.name}] DEBUG: pre_map keys = {list(pre_map.keys())[:50]}")
+        print(f"[{folder.name}] DEBUG: exact match? {left_path.name in pre_map}")
+        print(f"[{folder.name}] DEBUG: pre_map[left] = {pre_map.get(left_path.name)}")
+        print(f"[{folder.name}] DEBUG: lower match? {left_path.name.lower() in {k.lower(): v for k,v in pre_map.items()}}")
+
         if not left_path:
             meta["comparision_result"] = {"result": "comparison skipped: no baseline file found"}
             save_metadata(folder, meta)
             return f"[{folder.name}] skip compare: no baseline"
 
-        baseline_ok = bool(pre_map.get(left_path.name))
+        # baseline_ok = bool(pre_map.get(left_path.name))
+        def norm(s: str) -> str: return s.strip().casefold()
+        pre_map_ci = {norm(k): v for k, v in (meta.get("preprocessed_results") or {}).items()}
+        lp = left_path.name
+        lp_n = norm(lp)
+        raw_n = norm(lp.replace("_cleaned.xlsx", ".xlsx")) if lp_n.endswith("_cleaned.xlsx") else lp_n
+        baseline_ok = bool(pre_map_ci.get(lp_n) or pre_map_ci.get(raw_n))
+
+
+
+
+
         if not baseline_ok:
             meta["comparision_result"] = {"result": "comparison skipped: comparison file failed preprocessing"}
             save_metadata(folder, meta)
@@ -511,16 +545,55 @@ def process_one_folder(folder: Path) -> str:
 
         comp_result: Dict[str, bool] = {}
         writes = 0
+        # for v in vfiles:
+        #     vname = v.name
+        #     if not pre_map.get(vname):
+        #         comp_result[vname] = False
+        #         continue
+        #     try:
+        #         right_df = read_table(str(v), None)
+        #         result, stats = compare(left_df, right_df, as_of_date, 7, 0.0001)
+        #         out_path = folder / f"{v.stem}_comparision_result.xlsx"
+        #         write_excel(result, str(out_path))
+        #         print(f"[{folder.name}] wrote result to {out_path}")
+
+        #         writes += 1
+        #         comp_result[vname] = True
+
+        #         meta.setdefault("attachment_stats", {})
+        #         meta["attachment_stats"][v.name] = {
+        #             **stats,
+        #             "source_attachment": v.name,
+        #             "result_file": out_path.name,
+        #             "generated_at_utc": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        #         }
+        #         save_metadata(folder, meta)
+
+        
+        
+        def _norm(s: str) -> str:
+            return s.strip().casefold()
+
+# reuse the case-insensitive map you already build above:
+# pre_map_ci = { _norm(k): v }  (it already exists in your code)
+
         for v in vfiles:
             vname = v.name
-            if not pre_map.get(vname):
+            vkey  = _norm(vname)
+            raw_v = vkey.replace("_cleaned.xlsx", ".xlsx") if vkey.endswith("_cleaned.xlsx") else vkey
+            vendor_ok = bool(pre_map_ci.get(vkey) or pre_map_ci.get(raw_v))
+            if not vendor_ok:
+                print(f"[{folder.name}] compare skip {vname}: not preprocessed (have keys={list(pre_map_ci.keys())})")
                 comp_result[vname] = False
                 continue
+
             try:
                 right_df = read_table(str(v), None)
                 result, stats = compare(left_df, right_df, as_of_date, 7, 0.0001)
                 out_path = folder / f"{v.stem}_comparision_result.xlsx"
                 write_excel(result, str(out_path))
+                print(f"[{folder.name}] wrote result to {out_path}")
+
                 writes += 1
                 comp_result[vname] = True
 
@@ -533,12 +606,15 @@ def process_one_folder(folder: Path) -> str:
                 }
                 save_metadata(folder, meta)
 
+
+
             except Exception as e:
                 comp_result[vname] = False
-                print(f"[{folder.name}] compare fail {vname}: {e}")
+                print(f"\n\n\n\n\n[{folder.name}] compare fail {vname}: {e}\n\n\n\n")
 
         if comp_result:
             success_any = any(comp_result.values())
+            print(f"\n\nDEBUG: Putting comparision result in the metadata file \n\n")
             meta["comparision_result"] = {"result": "ok" if success_any else "no comparisons succeeded", **comp_result}
         else:
             meta["comparision_result"] = {"result": "no eligible vendor files"}
