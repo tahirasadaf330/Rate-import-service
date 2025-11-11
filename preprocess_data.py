@@ -18,6 +18,7 @@ BILLING_PAIRS = [
     ('min_bill', 'billing_step'),
     ('first_increment', 'second_increment'),
     ('first_increment', 'additional_increment'),
+    ('interval_1', 'interval_n'),  # Added for Interval 1/Interval N columns
 ]
 
 EXCEL_EPOCH = datetime(1899, 12, 30)          # Excel’s epoch (PC versions)
@@ -180,6 +181,7 @@ def _synthesize_billing_increment(df: pd.DataFrame) -> pd.DataFrame:
         ('min_bill', 'billing_step'),
         ('first_increment', 'second_increment'),
         ('first_increment', 'additional_increment'),
+        ('interval_1', 'interval_n')
     ]
 
     for a, b in pairs:
@@ -541,7 +543,8 @@ ALIAS_MAP = {
     'valid_from': 'Effective Date',
     'date': 'Effective Date',
     'effectivedate': 'Effective Date',
-    'efective_date': 'Effective Date',  
+    'efective_date': 'Effective Date',
+    'activation_date': 'Effective Date',
 
     # Billing Increment
     'billing_increment': 'Billing Increment',
@@ -1124,10 +1127,10 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
 
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Desktop\projects\rate-import-service\attachments\rates_at_evox.fr_20251106_091941\CPL_HAYOTEL_DEU-2025116-43120_.xls"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\HayoTel_A_To_Z___99992_RN.xlsx"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
-    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='DD-MMM-YYYY')
+    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='YYYY-MMM-DD')
    
     print('✅ Cleaned and saved.')
