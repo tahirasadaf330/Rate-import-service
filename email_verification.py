@@ -666,9 +666,11 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
                 skipped_read += 1
                 continue
 
-            # 2) ignore emails with subject starting with "HAYO FULL A-Z REPLACE ORIG"
-            if subject.upper().startswith("HAYO FULL A-Z REPLACE ORIG"):
-                print(f"  -> skip: subject starts with 'HAYO FULL A-Z REPLACE ORIG': {subject!r}")
+            # 2) ignore emails with subject containing "HAYO FULL A-Z REPLACE ORIG" (including reply prefixes)
+            subject_upper = subject.upper()
+            if (subject_upper.startswith("HAYO FULL A-Z REPLACE ORIG") or 
+                "HAYO FULL A-Z REPLACE ORIG" in subject_upper):
+                print(f"  -> skip: subject contains 'HAYO FULL A-Z REPLACE ORIG': {subject!r}")
                 skipped_hayo_replace += 1
                 continue
 
