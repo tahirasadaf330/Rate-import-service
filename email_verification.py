@@ -618,6 +618,7 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
     saved_messages = 0
     skipped_sender = skipped_subject = skipped_no_attach = skipped_ext = 0
     skipped_read = 0
+    skipped_hayo_replace = 0  # counter for HAYO FULL A-Z REPLACE ORIG subjects
     skipped_existing_dir = 0  # counter for idempotent skip
 
     print(f"Query: after={after or '(none)'} | before={before or '(none)'} | page size={page_size} | unread_only={unread_only}")
@@ -665,7 +666,13 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
                 skipped_read += 1
                 continue
 
-            # 2) unverified sender
+            # 2) ignore emails with subject starting with "HAYO FULL A-Z REPLACE ORIG"
+            if subject.upper().startswith("HAYO FULL A-Z REPLACE ORIG"):
+                print(f"  -> skip: subject starts with 'HAYO FULL A-Z REPLACE ORIG': {subject!r}")
+                skipped_hayo_replace += 1
+                continue
+
+            # 3) unverified sender
             if sender not in verified_set:
                 print("  -> skip: sender NOT in VERIFIED_SENDERS")
                 skipped_sender += 1
@@ -683,7 +690,7 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
                     print(f"(warn) failed to update failed_emails.json: {e}", file=sys.stderr)
                 continue
 
-            # 3) subject invalid → DB handling/override support
+            # 4) subject invalid → DB handling/override support
             parsed = validate_subject(subject)
             if not parsed:
                 print(f"  -> subject does not match required fields: {subject!r}")
@@ -745,7 +752,7 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
                     print(f"(warn) invalid-subject DB handling failed: {e}", file=sys.stderr)
                     continue  # fail-safe: skip for now
 
-            # 4) no attachments flag
+            # 5) no attachments flag
             if not has_attachments:
                 print("  -> skip: no attachments (hasAttachments=False)")
                 skipped_no_attach += 1
@@ -792,7 +799,7 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
             )
             print(f"  attachments considered: {considered_count} | skipped: {skipped_count} | saved_any={saved_any}")
 
-            # 5) none valid after checking
+            # 6) none valid after checking
             if not saved_any:
                 print("  -> skip: no attachment passed extension/size checks")
                 skipped_ext += 1
@@ -865,6 +872,7 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
     print(f"Matched messages:       {matched_messages}")
     print(f"Saved messages:         {saved_messages}")
     print(f"Skipped (sender):       {skipped_sender}")
+    print(f"Skipped (HAYO replace): {skipped_hayo_replace}")
     print(f"Skipped (subject):      {skipped_subject}")
     print(f"Skipped (no attach):    {skipped_no_attach}")
     print(f"Skipped (ext/size):     {skipped_ext}")
