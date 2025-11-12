@@ -18,7 +18,12 @@ BILLING_PAIRS = [
     ('min_bill', 'billing_step'),
     ('first_increment', 'second_increment'),
     ('first_increment', 'additional_increment'),
+<<<<<<< HEAD
     ('interval_1', 'interval_n'), # Added for Interval 1/Interval N columns
+=======
+    ('interval_1', 'interval_n'),
+    ('min_volume','interval'),  # Added for Interval 1/Interval N columns
+>>>>>>> f317cc2414773b16f08a49585d4aac5f24dfceb4
 ]
 
 EXCEL_EPOCH = datetime(1899, 12, 30)          # Excel’s epoch (PC versions)
@@ -182,6 +187,10 @@ def _synthesize_billing_increment(df: pd.DataFrame) -> pd.DataFrame:
         ('first_increment', 'second_increment'),
         ('first_increment', 'additional_increment'),
         ('interval_1', 'interval_n'),
+<<<<<<< HEAD
+=======
+        ('min_volume','interval'),
+>>>>>>> f317cc2414773b16f08a49585d4aac5f24dfceb4
     ]
 
     for a, b in pairs:
@@ -1206,8 +1215,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\HAYOGOLD-11-11-2025-04-19-clientrates-862-AZ.xlsx"
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\HayoTel_A_To_Z___99992_RN.xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\rates-all-Titan_International_Wholesale_Inc-for-STDIN--all_time-2025-11-11_000000.csv"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
