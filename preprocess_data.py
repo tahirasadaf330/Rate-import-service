@@ -517,7 +517,7 @@ ALIAS_MAP = {
     'codes': 'Dst Code',
     'dial_codes': 'Dst Code',
     'area_code': 'Dst Code',
-
+    'prefix': 'Dst Code',
 
     # Rate
     'rate': 'Rate',
@@ -578,15 +578,61 @@ def _normalize_header_key(s: str) -> str:
 # but this makes it robust to future edits.
 ALIAS_MAP_NORM = { _normalize_header_key(k): v for k, v in ALIAS_MAP.items() }
 
+def _find_best_column_match(columns_for_canonical: list, canonical_name: str) -> str:
+    """
+    When multiple columns map to the same canonical name, pick the best one.
+    Preference order:
+    1. Most specific ALIAS_MAP key match (longer keys are more specific)
+    2. Exact normalized name match to canonical
+    3. Shorter column name (more precise)
+    4. First occurrence
+    """
+    if len(columns_for_canonical) == 1:
+        return columns_for_canonical[0]
+    
+    # Build scoring for each column
+    scored_columns = []
+    
+    for col in columns_for_canonical:
+        # Calculate normalized key for this column
+        preclean = _preclean_header_token(col)
+        norm = _norm(preclean)
+        key = _strip_currency_words_from_key(norm)
+        
+        score = 0
+        
+        # Priority 1: Check if this is an exact match to a key in ALIAS_MAP
+        # Give higher scores to longer (more specific) keys
+        if key in ALIAS_MAP and ALIAS_MAP[key] == canonical_name:
+            base_score = 1000
+            # Add bonus for longer keys (more specific aliases)
+            specificity_bonus = len(key) * 10  # Longer keys get more points
+            score += base_score + specificity_bonus
+        
+        # Priority 2: Check if column name (when normalized) exactly equals the canonical
+        if key.replace('_', ' ').lower() == canonical_name.lower().replace(' ', '_'):
+            score += 500
+        
+        # Priority 3: Prefer shorter column names (often more precise) - but lower priority now
+        length_score = max(0, 100 - min(len(col), 100))  # Shorter names get higher scores
+        score += length_score
+        
+        scored_columns.append((score, col))
+    
+    # Sort by score (highest first), then by column name for stability
+    scored_columns.sort(key=lambda x: (-x[0], x[1]))
+    
+    return scored_columns[0][1]
+
 def _match_alias_substring(normalized_key: str, alias_map: dict = ALIAS_MAP_NORM):
     """
     Try to map a normalized header by substring match against alias keys.
     Returns canonical header string or None.
     Preference order:
-      1) exact match
+      1) exact match (but this should be handled in _canonicalize_headers now)
       2) longest alias that is a substring of the key
     """
-    # exact hit first
+    # exact hit first (though this should be handled upstream now)
     if normalized_key in alias_map:
         return alias_map[normalized_key]
 
@@ -608,35 +654,69 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
     norm_map = {c: _norm(preclean_map[c]) for c in original}
     # 3) Strip currency words that survived normalization (e.g., rate_usd -> rate)
     key_map = {c: _strip_currency_words_from_key(norm_map[c]) for c in original}
-    # 4) Alias lookup on the final key
-
-    alias_hit = {}
+    
+    # 4) Build mapping from canonical names to potential column matches
+    canonical_to_columns = {}
+    column_to_canonical = {}
+    
+    # First pass: collect all potential matches (exact and substring)
     for c in original:
-        # Skip renaming for 'Dst Code Name'
+        # Special cases first
         if c.lower() == 'dst code name':
-            alias_hit[c] = 'Dst Code Name'
-            continue  # skip this column
+            column_to_canonical[c] = 'Dst Code Name'
+            canonical_to_columns.setdefault('Dst Code Name', []).append(c)
+            continue
 
         if c.lower() == 'current rate usd':
-            alias_hit[c] = 'CURRENT RATE USD'
-            continue  # skip this column
+            column_to_canonical[c] = 'CURRENT RATE USD'
+            canonical_to_columns.setdefault('CURRENT RATE USD', []).append(c)
+            continue
 
-        key = key_map[c]  # already precleaned+normalized version of c
-        hit = ALIAS_MAP.get(key)
-        if not hit:
-            # fallback: alias substring match on the normalized key
-            hit = _match_alias_substring(key)
-        alias_hit[c] = hit
+        key = key_map[c]
+        canonical_name = None
+        
+        # Try exact match first
+        if key in ALIAS_MAP:
+            canonical_name = ALIAS_MAP[key]
+        else:
+            # Try substring match
+            canonical_name = _match_alias_substring(key)
+        
+        if canonical_name:
+            column_to_canonical[c] = canonical_name
+            canonical_to_columns.setdefault(canonical_name, []).append(c)
+    
+    # Second pass: resolve conflicts by picking the best match for each canonical name
+    final_alias_hit = {}
+    
+    for canonical_name, column_candidates in canonical_to_columns.items():
+        if len(column_candidates) == 1:
+            # No conflict, use the single match
+            final_alias_hit[column_candidates[0]] = canonical_name
+        else:
+            # Multiple columns map to same canonical name - pick the best one
+            best_column = _find_best_column_match(column_candidates, canonical_name)
+            final_alias_hit[best_column] = canonical_name
+            
+            # Mark other candidates as unmatched (they'll keep their cleaned names)
+            for col in column_candidates:
+                if col != best_column:
+                    final_alias_hit[col] = None
+    
+    # Ensure all columns have an entry
+    for c in original:
+        if c not in final_alias_hit:
+            final_alias_hit[c] = None
 
     # DEBUG
     dbg("[canon] original -> preclean -> norm -> key_strip -> alias:")
     for c in original:
-        dbg(f"  {repr(c)}  ->  {repr(preclean_map[c])}  ->  {norm_map[c]}  ->  {key_map[c]}  ->  {alias_hit[c]}")
-        if not alias_hit[c]:
+        dbg(f"  {repr(c)}  ->  {repr(preclean_map[c])}  ->  {norm_map[c]}  ->  {key_map[c]}  ->  {final_alias_hit[c]}")
+        if not final_alias_hit[c]:
             dbg("    codepoints(original):", _codepoints(c))
 
     # If alias matches, use canonical; otherwise keep the cleaned label
-    mapped = {c: (alias_hit[c] if alias_hit[c] else preclean_map[c]) for c in original}
+    mapped = {c: (final_alias_hit[c] if final_alias_hit[c] else preclean_map[c]) for c in original}
     df = df.rename(columns=mapped)
 
     # ---------- NEW: tolerate missing Billing Increment if a known pair exists ----------
@@ -1124,10 +1204,9 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     out_path, writer_kwargs = _normalize_excel_writer_path(output_path)
     df.to_excel(out_path, index=False, **writer_kwargs)
     return df
-
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\HayoTel_A_To_Z___99992_RN.xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Desktop\projects\rate-import-service\attachments\rates_at_evox.fr_20251106_091941\CPL_HAYOTEL_DEU-2025116-43120_.xls"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 

@@ -2,3 +2,6 @@ attachments/
 attachments_new/
 venv/
 test_files/
+__pycache__/
+*.py[cod]
+*.pyo
