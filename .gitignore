@@ -1,4 +1,7 @@
+failed_subjects.json
+failed_emails.json
 attachments/
+email_body.txt
 attachments_new/
 venv/
 test_files/
