@@ -372,7 +372,15 @@ def process_one_folder(folder: Path) -> str:
                 if isinstance(info, str):
                     # export_rates_by_query returns a string on error
                     meta["keyword_error"] = info
+                    meta["jera_fetched"] = False  # Mark JeraSoft fetch as failed in metadata
                     save_metadata(folder, meta)
+                    
+                    # Update processing_statuses to mark jera_fetched as failed
+                    try:
+                        mark_processing_stage(directory_name=folder.name, stage="jera_fetched", final_status=False)
+                    except Exception as db_error:
+                        print(f"[{folder.name}] stage warn (jera_fetched failed): {db_error}")
+                    
                     return f"[{folder.name}] export error: {info}"
 
                 # read back the file for row count
@@ -390,6 +398,7 @@ def process_one_folder(folder: Path) -> str:
             meta["human_eval_details_jerasoft"] = {"file": Path(output_path).name, "rows": rows_js}
             meta["need_human_eval_jerasoft"] = bool(meta.get("need_human_eval_jerasoft")) or (rows_js < 100)
             meta["jerasoft_preprocessed"] = True
+            meta["jera_fetched"] = True  # Flag for JeraSoft fetched in metadata
             save_metadata(folder, meta)
 
             try:
@@ -399,7 +408,15 @@ def process_one_folder(folder: Path) -> str:
 
         except Exception as e:
             meta["keyword_error"] = str(e)
+            meta["jera_fetched"] = False  # Mark JeraSoft fetch as failed in metadata
             save_metadata(folder, meta)
+            
+            # Update processing_statuses to mark jera_fetched as failed
+            try:
+                mark_processing_stage(directory_name=folder.name, stage="jera_fetched", final_status=False)
+            except Exception as db_error:
+                print(f"[{folder.name}] stage warn (jera_fetched failed): {db_error}")
+            
             return f"[{folder.name}] ✖ export failed: {e}"
 
     # -------- 2) Cleaning (if needed) --------
