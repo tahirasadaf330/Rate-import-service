@@ -21,6 +21,7 @@ from database import (
     mark_processing_stage,
     update_reprocessing_enabled
 )
+from database_flag import reset_processing_flags
 
 
 class ReprocessingManager:
@@ -64,7 +65,7 @@ class ReprocessingManager:
             self._remove_cleaned_files(directory_path)
             
             # Step 3: Reset processing status flags
-            if not self._reset_processing_flags(directory_name):
+            if not reset_processing_flags(directory_name, str(self.attachments_root)):
                 return False
             
             # Step 4: Disable reprocessing flag (job done)
@@ -131,7 +132,9 @@ class ReprocessingManager:
                 "attachment_stats", 
                 "comparision_result",
                 "rate_upload_id",
-                "results_pushed"
+                "results_pushed",
+               # Clean up old reprocessing flags
+                "reprocessing_reset_at_utc"
             ]
             
             # Remove the flags
@@ -144,8 +147,8 @@ class ReprocessingManager:
             else:
                 print(f"  Preserving jera_fetched=true for {directory_path.name}")
             
-            # Update processed timestamp
-            metadata["reprocessing_reset_at_utc"] = datetime.utcnow().isoformat() + "Z"
+            # Update processed timestamp (reuse existing field instead of creating new one)
+            metadata["processed_at_utc"] = datetime.utcnow().isoformat() + "Z"
             
             # Write back cleaned metadata
             with metadata_path.open("w", encoding="utf-8") as f:
@@ -186,64 +189,7 @@ class ReprocessingManager:
         except Exception as e:
             print(f"  Warning: Error removing cleaned files from {directory_path}: {e}")
     
-    def _reset_processing_flags(self, directory_name: str) -> bool:
-        """
-        Reset all processing status flags to FALSE to start fresh processing.
-        Preserves jera_fetched only if it should be kept based on metadata.
-        """
-        try:
-            # Get current status to check jera_fetched
-            current_status = get_processing_status(directory_name=directory_name)
-            if not current_status:
-                print(f"  No processing status found for {directory_name}")
-                return False
-            
-            # Check if we should preserve jera_fetched from metadata
-            directory_path = self.attachments_root / directory_name
-            metadata_path = directory_path / "metadata.json"
-            preserve_jera = False
-            
-            if metadata_path.exists():
-                try:
-                    with metadata_path.open("r", encoding="utf-8") as f:
-                        metadata = json.load(f)
-                    preserve_jera = metadata.get("jera_fetched", False)
-                except Exception:
-                    pass
-            
-            # Reset all flags to start fresh processing
-            # Note: mark_processing_stage expects success/failure, so we'll update directly
-            from database import get_conn
-            
-            sql = """
-                UPDATE processing_statuses 
-                SET is_date_format_fetched = FALSE,
-                    is_jera_fetched = %s,
-                    is_file_cleaned = FALSE,
-                    is_rate_compared = FALSE, 
-                    is_rate_uploaded = FALSE,
-                    status = 'processing',
-                    updated_at = NOW()
-                WHERE directory_name = %s
-            """
-            
-            with get_conn() as conn, conn.cursor() as cur:
-                cur.execute(sql, (preserve_jera, directory_name))
-                affected = cur.rowcount
-                conn.commit()
-            
-            if affected > 0:
-                jera_status = "preserved" if preserve_jera else "reset"
-                print(f"  Reset processing flags (jera_fetched {jera_status}) for {directory_name}")
-                return True
-            else:
-                print(f"  No rows updated for {directory_name}")
-                return False
-                
-        except Exception as e:
-            print(f"  Error resetting processing flags for {directory_name}: {e}")
-            return False
-    
+
     def reprocess_all_enabled_directories(self) -> Dict[str, bool]:
         """
         Find all directories marked for reprocessing and reset them.

@@ -2,7 +2,7 @@ from typing import Iterable, Tuple, Optional, Dict, Any, List, Mapping
 from pathlib import Path
 import json
 from datetime import date, datetime, timezone
-from database import mark_ingest_processed, upsert_processing_status
+from database import mark_ingest_processed, upsert_processing_status, get_processing_status, get_conn
 from date_verification import _parse_iso_utc_dt
 
 
@@ -171,3 +171,66 @@ def seed_processing_status_rows(attachments_root: str | Path = "attachments") ->
 
     print(f"[STATUS] seed summary: scanned={scanned}, upserted={upserts}, bad={bad}")
     return scanned, upserts, bad
+
+
+def reset_processing_flags(directory_name: str, attachments_root: str = "attachments") -> bool:
+    """
+    Reset all processing status flags to FALSE to start fresh processing.
+    Preserves jera_fetched only if it should be kept based on metadata.
+    
+    Args:
+        directory_name: Name of the directory to reset processing flags for
+        attachments_root: Root directory for attachments (default: "attachments")
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Get current status to check jera_fetched
+        current_status = get_processing_status(directory_name=directory_name)
+        if not current_status:
+            print(f"  No processing status found for {directory_name}")
+            return False
+        
+        # Check if we should preserve jera_fetched from metadata
+        directory_path = Path(attachments_root) / directory_name
+        metadata_path = directory_path / "metadata.json"
+        preserve_jera = False
+        
+        if metadata_path.exists():
+            try:
+                with metadata_path.open("r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+                preserve_jera = metadata.get("jera_fetched", False)
+            except Exception:
+                pass
+        
+        # Reset all flags to start fresh processing
+        sql = """
+            UPDATE processing_statuses 
+            SET is_date_format_fetched = FALSE,
+                is_jera_fetched = %s,
+                is_file_cleaned = FALSE,
+                is_rate_compared = FALSE, 
+                is_rate_uploaded = FALSE,
+                status = 'processing',
+                updated_at = NOW()
+            WHERE directory_name = %s
+        """
+        
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, (preserve_jera, directory_name))
+            affected = cur.rowcount
+            conn.commit()
+        
+        if affected > 0:
+            jera_status = "preserved" if preserve_jera else "reset"
+            print(f"  Reset processing flags (jera_fetched {jera_status}) for {directory_name}")
+            return True
+        else:
+            print(f"  No rows updated for {directory_name}")
+            return False
+            
+    except Exception as e:
+        print(f"  Error resetting processing flags for {directory_name}: {e}")
+        return False

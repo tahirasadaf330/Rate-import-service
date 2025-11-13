@@ -318,20 +318,6 @@ def process_one_folder(folder: Path) -> str:
     meta = load_metadata(folder)
     if not meta:
         return f"[{folder.name}] skip: no/invalid metadata.json"
-
-    # Check database status first - skip failed directories unless reprocessing enabled
-    try:
-        from database import get_processing_status
-        db_status = get_processing_status(directory_name=folder.name)
-        if db_status:
-            if db_status['status'] == 'failed' and not db_status['is_reprocessing_enabled']:
-                return f"[{folder.name}] skip: marked as failed (reprocessing disabled)"
-            elif db_status['status'] == 'success':
-                return f"[{folder.name}] already pushed"
-    except Exception as e:
-        # If database check fails, continue with processing (don't block on DB issues)
-        pass
-
     if not bool(meta.get("date_verification_ingestion_status")):
         return f"[{folder.name}] skip: waiting for date verification approval"
 
