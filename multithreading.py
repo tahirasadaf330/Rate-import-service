@@ -318,7 +318,6 @@ def process_one_folder(folder: Path) -> str:
     meta = load_metadata(folder)
     if not meta:
         return f"[{folder.name}] skip: no/invalid metadata.json"
-
     if not bool(meta.get("date_verification_ingestion_status")):
         return f"[{folder.name}] skip: waiting for date verification approval"
 

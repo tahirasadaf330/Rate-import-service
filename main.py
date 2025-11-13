@@ -21,6 +21,7 @@ from database import push_failed_emails_json_to_db, fetch_approved_unprocessed_p
 from datetime import date, datetime, timezone
 from date_verification import  ingest_files_for_manual_date, mark_date_verification_ingestion
 from database_flag import seed_processing_status_rows, finalize_processed_flags
+from reprocessing import ReprocessingManager
 FAILED_EMAILS_PATH = Path(__file__).with_name("failed_emails.json")
 
 
@@ -33,6 +34,9 @@ unread_only = False
 ATTEMPTS = 2
 #____________________________________#
 if __name__ == "__main__":
+    # Handle reprocessing first
+    ReprocessingManager("attachments").reprocess_all_enabled_directories()
+    
     # scrap all the valid emails
     verify_fetch_emails(after, before, unread_only)
     seed_processing_status_rows("attachments")
