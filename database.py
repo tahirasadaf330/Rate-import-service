@@ -140,7 +140,9 @@ def insert_rejected_emails(rows: Iterable[Mapping[str, Any]]) -> List[int]:
 
     with get_conn() as conn, conn.cursor() as cur:
         # execute_values will expand the VALUES %s placeholder into many tuples
-        execute_values(cur, sql, values, template=None, page_size=100)
+        # Template to match the 8 columns (6 data + 2 timestamps)
+        template = "(%s,%s,%s,%s,%s,%s,NOW(),NOW())"
+        execute_values(cur, sql, values, template=template, page_size=100)
         ids = [row[0] for row in cur.fetchall()]
         conn.commit()
     return ids
@@ -738,6 +740,7 @@ def upsert_processing_status(
     sender_email: Optional[str] = None,
     email_subject: Optional[str] = None,
     email_received_at: Optional[datetime] = None,
+    is_reprocessing_enabled: Optional[bool] = None,
 ) -> int:
     """
     Create or update a processing_statuses row keyed by internet_message_id.
@@ -750,21 +753,22 @@ def upsert_processing_status(
     sql = """
     INSERT INTO processing_statuses (
         internet_message_id, directory_name, sender_email, email_subject, email_received_at,
-        created_at, updated_at
-    ) VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+        is_reprocessing_enabled, created_at, updated_at
+    ) VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
     ON CONFLICT (internet_message_id) DO UPDATE SET
-        directory_name    = EXCLUDED.directory_name,
-        sender_email      = COALESCE(EXCLUDED.sender_email, processing_statuses.sender_email),
-        email_subject     = COALESCE(EXCLUDED.email_subject, processing_statuses.email_subject),
-        email_received_at = COALESCE(EXCLUDED.email_received_at, processing_statuses.email_received_at),
-        updated_at        = NOW()
+        directory_name           = EXCLUDED.directory_name,
+        sender_email             = COALESCE(EXCLUDED.sender_email, processing_statuses.sender_email),
+        email_subject            = COALESCE(EXCLUDED.email_subject, processing_statuses.email_subject),
+        email_received_at        = COALESCE(EXCLUDED.email_received_at, processing_statuses.email_received_at),
+        is_reprocessing_enabled  = COALESCE(EXCLUDED.is_reprocessing_enabled, processing_statuses.is_reprocessing_enabled),
+        updated_at               = NOW()
     RETURNING id;
     """
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             sql,
-            (internet_message_id, directory_name, sender_email, email_subject, email_received_at),
+            (internet_message_id, directory_name, sender_email, email_subject, email_received_at, is_reprocessing_enabled),
         )
         rid = cur.fetchone()[0]
         conn.commit()
@@ -778,6 +782,7 @@ def ensure_row_by_directory(
     sender_email: Optional[str] = None,
     email_subject: Optional[str] = None,
     email_received_at: Optional[datetime] = None,
+    is_reprocessing_enabled: Optional[bool] = None,
 ) -> int:
     """
     Idempotent ensure by directory_name (handy when you don't yet know the message-id).
@@ -800,14 +805,15 @@ def ensure_row_by_directory(
             cur.execute(
                 """
                 UPDATE processing_statuses
-                   SET internet_message_id = COALESCE(%s, internet_message_id),
-                       sender_email        = COALESCE(%s, sender_email),
-                       email_subject       = COALESCE(%s, email_subject),
-                       email_received_at   = COALESCE(%s, email_received_at),
-                       updated_at          = NOW()
+                   SET internet_message_id      = COALESCE(%s, internet_message_id),
+                       sender_email             = COALESCE(%s, sender_email),
+                       email_subject            = COALESCE(%s, email_subject),
+                       email_received_at        = COALESCE(%s, email_received_at),
+                       is_reprocessing_enabled  = COALESCE(%s, is_reprocessing_enabled),
+                       updated_at               = NOW()
                  WHERE id = %s
                 """,
-                (internet_message_id, sender_email, email_subject, email_received_at, rid),
+                (internet_message_id, sender_email, email_subject, email_received_at, is_reprocessing_enabled, rid),
             )
             conn.commit()
             return rid
@@ -819,11 +825,11 @@ def ensure_row_by_directory(
             """
             INSERT INTO processing_statuses
               (internet_message_id, directory_name, sender_email, email_subject, email_received_at,
-               created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+               is_reprocessing_enabled, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
             RETURNING id
             """,
-            (internet_message_id, directory_name, sender_email, email_subject, email_received_at),
+            (internet_message_id, directory_name, sender_email, email_subject, email_received_at, is_reprocessing_enabled),
         )
         rid = cur.fetchone()[0]
         conn.commit()
@@ -903,7 +909,7 @@ def get_processing_status(
     sql = f"""
     SELECT id, internet_message_id, directory_name, sender_email, email_subject, email_received_at,
            is_date_format_fetched, is_jera_fetched, is_file_cleaned, is_rate_compared, is_rate_uploaded, status,
-           created_at, updated_at
+           is_reprocessing_enabled, created_at, updated_at
       FROM processing_statuses
      WHERE {where[0]}
     """
@@ -915,9 +921,117 @@ def get_processing_status(
         keys = [
             "id","internet_message_id","directory_name","sender_email","email_subject","email_received_at",
             "is_date_format_fetched","is_jera_fetched","is_file_cleaned","is_rate_compared","is_rate_uploaded","status",
-            "created_at","updated_at",
+            "is_reprocessing_enabled","created_at","updated_at",
         ]
         return dict(zip(keys, row))
+
+def update_reprocessing_enabled(
+    *,
+    directory_name: Optional[str] = None,
+    internet_message_id: Optional[str] = None,
+    is_reprocessing_enabled: bool,
+) -> int:
+    """
+    Update the is_reprocessing_enabled flag for a specific processing_statuses row.
+    
+    Args:
+        directory_name: Directory name to identify the row
+        internet_message_id: Message ID to identify the row
+        is_reprocessing_enabled: New value for the reprocessing flag
+        
+    Returns:
+        Number of rows affected (should be 1 if successful, 0 if row not found)
+    """
+    if not directory_name and not internet_message_id:
+        raise ValueError("provide directory_name or internet_message_id")
+
+    if directory_name:
+        where_sql = "directory_name = %s"
+        where_args = (is_reprocessing_enabled, directory_name)
+    else:
+        where_sql = "internet_message_id = %s"
+        where_args = (is_reprocessing_enabled, internet_message_id)
+
+    sql = f"""
+        UPDATE processing_statuses 
+        SET is_reprocessing_enabled = %s, updated_at = NOW()
+        WHERE {where_sql}
+    """
+    
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, where_args)
+        affected = cur.rowcount
+        conn.commit()
+        return affected
+
+def get_reprocessing_enabled_directories(limit: Optional[int] = None) -> List[str]:
+    """
+    Get a list of directory names where reprocessing is enabled AND status is failed.
+    Only shows reprocessing option for failed emails, not successful ones.
+    
+    Args:
+        limit: Optional limit on number of results
+        
+    Returns:
+        List of directory names with reprocessing enabled and failed status
+    """
+    base_sql = """
+        SELECT directory_name
+        FROM processing_statuses
+        WHERE is_reprocessing_enabled = TRUE
+          AND directory_name IS NOT NULL
+          AND status = 'failed'
+        ORDER BY updated_at DESC
+    """
+    
+    sql = base_sql + (" LIMIT %s" if limit is not None else "")
+    
+    with get_conn() as conn, conn.cursor() as cur:
+        if limit is not None:
+            cur.execute(sql, (limit,))
+        else:
+            cur.execute(sql)
+        rows = cur.fetchall()
+    
+    return [row[0] for row in rows if row[0]]
+
+def get_failed_directories_for_reprocessing(limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Get failed processing status records that are eligible for reprocessing.
+    Only returns failed emails (not successful ones).
+    
+    Args:
+        limit: Optional limit on number of results
+        
+    Returns:
+        List of dictionaries with processing status information for failed emails
+    """
+    base_sql = """
+        SELECT id, internet_message_id, directory_name, sender_email, email_subject, 
+               email_received_at, status, is_reprocessing_enabled,
+               created_at, updated_at
+        FROM processing_statuses
+        WHERE status = 'failed'
+          AND directory_name IS NOT NULL
+        ORDER BY updated_at DESC
+    """
+    
+    sql = base_sql + (" LIMIT %s" if limit is not None else "")
+    
+    with get_conn() as conn, conn.cursor() as cur:
+        if limit is not None:
+            cur.execute(sql, (limit,))
+        else:
+            cur.execute(sql)
+        rows = cur.fetchall()
+    
+    keys = [
+        "id", "internet_message_id", "directory_name", "sender_email", "email_subject",
+        "email_received_at", "status", "is_reprocessing_enabled", "created_at", "updated_at"
+    ]
+    
+    return [dict(zip(keys, row)) for row in rows]
+
 # ===== Invalid Subject helpers =====
 
 def get_or_create_invalid_subject(email: str,
