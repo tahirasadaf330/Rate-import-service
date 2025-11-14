@@ -19,7 +19,8 @@ BILLING_PAIRS = [
     ('first_increment', 'second_increment'),
     ('first_increment', 'additional_increment'),
     ('interval_1', 'interval_n'),
-    ('min_volume','interval'),  # Added for Interval 1/Interval N columns
+    ('min_volume','interval'),
+    ('mc', 'ci'),  # Added for Interval 1/Interval N columns
 ]
 
 EXCEL_EPOCH = datetime(1899, 12, 30)          # Excel’s epoch (PC versions)
@@ -184,6 +185,7 @@ def _synthesize_billing_increment(df: pd.DataFrame) -> pd.DataFrame:
         ('first_increment', 'additional_increment'),
         ('interval_1', 'interval_n'),
         ('min_volume','interval'),
+        ('mc', 'ci'),
     ]
 
     for a, b in pairs:
