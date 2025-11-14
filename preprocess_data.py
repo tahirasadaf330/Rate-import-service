@@ -397,7 +397,34 @@ def _read_raw_matrix(path: str, sheet=0) -> pd.DataFrame:
         raise ValueError("No sheet contains all required headers (openpyxl and pandas fallbacks failed).")
     else:
         # Non-Excel → treat as CSV/TSV/etc.
-        return pd.read_csv(path, header=None, dtype=str)
+        try:
+            # First try: default CSV reading
+            df = pd.read_csv(path, header=None, dtype=str)
+            print(f"DEBUG: Successfully read CSV with default engine. Shape: {df.shape}")
+            return df
+        except Exception as e:
+            print(f"DEBUG: Default CSV reading failed: {e}")
+            print(f"DEBUG: Error details: {type(e).__name__}: {e}")
+            
+            # Try to find where the actual CSV data starts by skipping header lines
+            print("DEBUG: Trying to skip header lines and find CSV data...")
+            for skip_lines in range(0, 10):  # Try skipping 0-9 lines
+                try:
+                    df = pd.read_csv(path, header=None, dtype=str, skiprows=skip_lines)
+                    if df.shape[1] >= 4:  # CSV should have at least 4 columns
+                        print(f"DEBUG: Found CSV data starting at line {skip_lines + 1}. Shape: {df.shape}")
+                        print(f"DEBUG: First 5 rows after skipping {skip_lines} lines:")
+                        print(df.head(5))
+                        return df
+                except Exception as skip_e:
+                    print(f"DEBUG: Skipping {skip_lines} lines failed: {skip_e}")
+                    continue
+            
+            # If still failing, try with Python engine and error handling
+            print("DEBUG: Trying Python engine with error handling as final fallback...")
+            df = pd.read_csv(path, header=None, dtype=str, engine='python', on_bad_lines='skip')
+            print(f"DEBUG: Python engine result. Shape: {df.shape}")
+            return df
 
 # In the detect_header_row function:
 def detect_header_row(raw: pd.DataFrame) -> int:
@@ -429,6 +456,12 @@ def detect_header_row(raw: pd.DataFrame) -> int:
         if idx <=10:
             print(f"DEBUG TARGETS: {targets}")
             print("DEBUG IN THE DETECT HEADER ROW: covered so far", covered)
+            print(f"DEBUG ROW {idx} CELLS: {cells}")
+            print(f"DEBUG ROW {idx} NORMALIZED: {normed}")
+            print(f"DEBUG ROW {idx} MAPPED: {mapped}")
+            if covered:
+                print(f"DEBUG ROW {idx} FOUND MAPPINGS: {[(c, m) for c, m in zip(cells, mapped) if m]}")
+            print("---")
 
         ###################
         # ---------- tolerate missing Billing Increment if related headers exist ----------
@@ -1208,7 +1241,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\rates-all-Titan_International_Wholesale_Inc-for-STDIN--all_time-2025-11-11_000000.csv"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\HAYOINWHL1771151520251113141004.csv"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
