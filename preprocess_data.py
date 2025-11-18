@@ -198,13 +198,44 @@ def _synthesize_billing_increment(df: pd.DataFrame) -> pd.DataFrame:
                 return df
 
     # fallback: single-column duplication if we only have one increment-ish column
-    singles = ['initial_period', 'min_bill', 'first_increment']
-    for k in singles:
+    # Extract all possible singles from pairs dynamically
+    potential_singles = set()
+    for a, b in pairs:
+        potential_singles.add(a)
+        potential_singles.add(b)
+    
+    # Add explicit singles
+    explicit_singles = ['increment']
+    potential_singles.update(explicit_singles)
+    
+    for k in potential_singles:
         if k in norm2real:
-            one = df[norm2real[k]].map(_last_num)
-            if one.ne('').any():
-                df['Billing Increment'] = np.where(one != '', one + '/' + one, '')
+            col_values = df[norm2real[k]].astype(str).str.strip()
+            
+            # Check if values already contain "/" format (like "1/1", "60/60")
+            has_slash_format = col_values.str.contains(r'\d+/\d+', regex=True, na=False)
+            
+            if has_slash_format.any():
+                # Use existing slash format directly where it exists
+                df['Billing Increment'] = np.where(
+                    has_slash_format & (col_values != ''), 
+                    col_values, 
+                    ''
+                )
+                
+                # For values without slash format, extract number and duplicate
+                one = col_values.map(_last_num)
+                no_slash_mask = ~has_slash_format & (one != '')
+                if no_slash_mask.any():
+                    df.loc[no_slash_mask, 'Billing Increment'] = one[no_slash_mask] + '/' + one[no_slash_mask]
+                
                 return df
+            else:
+                # Original logic: extract last number and duplicate
+                one = col_values.map(_last_num)
+                if one.ne('').any():
+                    df['Billing Increment'] = np.where(one != '', one + '/' + one, '')
+                    return df
 
     # ensure the column exists so downstream selection doesn't explode
     df['Billing Increment'] = ''
@@ -484,14 +515,24 @@ def detect_header_row(raw: pd.DataFrame) -> int:
             pair_hit = any(_has_key(a) and _has_key(b) for (a, b) in BILLING_PAIRS)
 
             # Singles are also enough, because _synthesize_billing_increment can duplicate a single
-            singles = ['initial_period', 'min_bill', 'first_increment', 'increment']
-            single_hit = any(_has_key(k) for k in singles)
+            # Extract all possible singles from pairs dynamically
+            potential_singles = set()
+            for a, b in BILLING_PAIRS:
+                potential_singles.add(a)
+                potential_singles.add(b)
+            
+            # Add explicit singles
+            explicit_singles = ['increment']
+            potential_singles.update(explicit_singles)
+            
+            # Check if any single column from pairs exists (even if its pair doesn't)
+            single_hit = any(_has_key(k) for k in potential_singles)
 
             if pair_hit or single_hit:
                 covered.add('Billing Increment')
 
             dbg("  billing_pair_hit:", pair_hit, "singles_hit:", single_hit,
-                "pairs_checked:", BILLING_PAIRS, "singles_checked:", singles)
+                "pairs_checked:", BILLING_PAIRS, "singles_checked:", list(potential_singles))
         # ----------------------------------------------------------------------------- 
         ##################
 
@@ -570,7 +611,7 @@ ALIAS_MAP = {
     'new_price': 'Rate',
     'price_peak': 'Rate',
     'pricemin': 'Rate',
-
+    'recurring_charge': 'Rate',
     # Effective Date
     'effective_date': 'Effective Date',
     'effective': 'Effective Date',
@@ -776,12 +817,29 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
         pair_hit = any(_has_key(a) and _has_key(b) for (a, b) in BILLING_PAIRS)
         dbg("[canon] billing_pair_hit:", pair_hit, "pairs_checked:", BILLING_PAIRS)
 
-        if pair_hit:
+        # Singles are also enough, because _synthesize_billing_increment can duplicate a single
+        # Extract all possible singles from pairs dynamically
+        potential_singles = set()
+        for a, b in BILLING_PAIRS:
+            potential_singles.add(a)
+            potential_singles.add(b)
+        
+        # Add explicit singles
+        explicit_singles = ['increment']
+        potential_singles.update(explicit_singles)
+        
+        # Check if any single column from pairs exists (even if its pair doesn't)
+        single_hit = any(_has_key(k) for k in potential_singles)
+        
+        dbg("[canon] billing_pair_hit:", pair_hit, "singles_hit:", single_hit,
+            "pairs_checked:", BILLING_PAIRS, "singles_checked:", list(potential_singles))
+
+        if pair_hit or single_hit:
             # don’t count BI as missing; create placeholder so later selection won’t crash
             missing = [m for m in missing if m != 'Billing Increment']
             if 'Billing Increment' not in df.columns:
                 df['Billing Increment'] = ''   # _synthesize_billing_increment will fill this later
-            dbg("[canon] Billing Increment satisfied via header pair; will synthesize values later.")
+            dbg("[canon] Billing Increment satisfied via header pair/single; will synthesize values later.")
     # -----------------------------------------------------------------------------------
 
     # Final guard
@@ -1243,7 +1301,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\HAYOINWHL1771151520251113141004.csv"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\rates-all-Titan_International_Wholesale_Inc-for-STDIN--all_time-2025-11-11_000000.csv"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
