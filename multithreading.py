@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -354,6 +355,7 @@ def process_one_folder(folder: Path) -> str:
 
                 rows_js = int(js_df.shape[0]) if hasattr(js_df, "shape") else 0
                 meta["best_table_name"] = force_table
+                meta["table_id"] = int(tid)  # Store table_id for JeraSoft upload
 
             else:
                 # Normal path: build a safe non-empty target_query (fallback to subject if needed)
@@ -392,6 +394,7 @@ def process_one_folder(folder: Path) -> str:
                     pass
 
                 meta["best_table_name"] = info.get("best_table_name")
+                meta["table_id"] = info.get("table_id")  # Store table_id for JeraSoft upload
 
             # common metadata after either path
             meta["human_eval_details_jerasoft"] = {"file": Path(output_path).name, "rows": rows_js}
@@ -613,6 +616,54 @@ def process_one_folder(folder: Path) -> str:
                 writes += 1
                 comp_result[vname] = True
 
+                # Get table_id from metadata for JeraSoft upload
+                jerasoft_table_id = meta.get("table_id") or meta.get("best_table_id")
+                
+                # Mark for JeraSoft BULK upload in database (always bulk, never individual)
+                jera_upload_enabled = os.getenv("JERASOFT_DB_CONTROL", "true").lower() in ("true", "1", "yes")
+                min_rates = int(os.getenv("JERASOFT_MIN_RATES_FOR_AUTO_UPLOAD", "1"))
+                
+                if jera_upload_enabled and jerasoft_table_id and len(result) >= min_rates:
+                    try:
+                        print(f"[{folder.name}] JeraSoft table {jerasoft_table_id} detected - comparison file ready for MANUAL bulk upload")
+                        print(f"[{folder.name}] ℹ️  To upload: Set is_rate_approved_by_admin = TRUE in database for this record")
+                        
+                        # Store comparison file path in metadata for future manual upload
+                        # No automatic marking - manual control required
+                        subject = meta.get("subject", f"Rate Update - {folder.name}")
+                        sender_email = meta.get("sender", "unknown@example.com")
+                        
+                        # Store file info for manual upload control
+                        print(f"[{folder.name}] 📋 Comparison file ready: {out_path.name}")
+                        print(f"[{folder.name}] 🎯 Target table: {jerasoft_table_id}")
+                        print(f"[{folder.name}] ⚡ Manual control: Set is_rate_approved_by_admin=TRUE in database to trigger bulk upload")
+                        
+                        # Store upload info in metadata (for reference only)
+                        meta.setdefault("jerasoft_upload", {})
+                        meta["jerasoft_upload"][v.name] = {
+                            "table_id": jerasoft_table_id,
+                            "comparison_file": str(out_path.absolute()),
+                            "subject": subject,
+                            "sender_email": sender_email,
+                            "created_at": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                            "status": "ready_for_manual_upload"
+                        }
+                        
+                    except Exception as upload_error:
+                        print(f"[{folder.name}] ❌ Failed to mark for JeraSoft upload: {upload_error}")
+                        meta.setdefault("jerasoft_upload", {})
+                        meta["jerasoft_upload"][v.name] = {
+                            "table_id": jerasoft_table_id,
+                            "error": str(upload_error),
+                            "uploaded_at_utc": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                            "status": "failed"
+                        }
+                else:
+                    if not jerasoft_table_id:
+                        print(f"[{folder.name}] ⚠️ No table_id in metadata, skipping JeraSoft upload")
+                    elif len(result) == 0:
+                        print(f"[{folder.name}] ⚠️ No comparison results, skipping JeraSoft upload")
+
                 meta.setdefault("attachment_stats", {})
                 meta["attachment_stats"][v.name] = {
                     **stats,
@@ -698,6 +749,19 @@ def process_one_folder(folder: Path) -> str:
     except Exception:
         processed_at = None
 
+    # Get table_id from metadata
+    jera_table_id = meta.get("table_id") or meta.get("best_table_id")
+    
+    # Extract comparison file path from metadata (jerasoft_upload section)
+    comparison_file_path = None
+    jerasoft_upload = meta.get("jerasoft_upload", {})
+    if jerasoft_upload:
+        # Get the first available comparison file path
+        for upload_info in jerasoft_upload.values():
+            if isinstance(upload_info, dict) and "comparison_file" in upload_info:
+                comparison_file_path = upload_info["comparison_file"]
+                break
+    
     upload_id = meta.get("rate_upload_id")
     if not upload_id:
         try:
@@ -707,6 +771,8 @@ def process_one_folder(folder: Path) -> str:
                 received_at=received_at,
                 processed_at=processed_at,
                 totals=stats_totals,
+                jera_table_id=jera_table_id,
+                comparison_file_path=comparison_file_path,
             )
             meta["rate_upload_id"] = int(upload_id)
             save_metadata(folder, meta)

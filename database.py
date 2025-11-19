@@ -330,6 +330,8 @@ def insert_rate_upload(
     received_at: Optional[datetime] = None,
     processed_at: Optional[datetime] = None,
     totals: Optional[Dict[str, int]] = None,
+    jera_table_id: Optional[int] = None,
+    comparison_file_path: Optional[str] = None,
 ) -> int:
     """
     Insert one row into rate_uploads with summary counters.
@@ -337,7 +339,8 @@ def insert_rate_upload(
     rate_uploads columns covered:
       subject, sender_email, received_at, processed_at,
       total_rows, new, increase, decrease, unchanged, closed,
-      backdated_increase, backdated_decrease, billing_increment_changes
+      backdated_increase, backdated_decrease, billing_increment_changes,
+      comparison_file_path
     """
     t = {
         "total_rows": 0,
@@ -358,11 +361,11 @@ def insert_rate_upload(
         (subject, sender_email, received_at, processed_at,
          total_rows, "new", increase, decrease, unchanged, closed,
          backdated_increase, backdated_decrease, billing_increment_changes,
-         created_at, updated_at)
+         jera_table_id, comparison_file_path, created_at, updated_at)
         VALUES
         (%s, %s, COALESCE(%s, NOW()), %s,
          %s, %s, %s, %s, %s, %s,
-         %s, %s, %s,
+         %s, %s, %s, %s, %s,
          NOW(), NOW())
         RETURNING id;
     """
@@ -384,6 +387,8 @@ def insert_rate_upload(
                 t["backdated_increase"],
                 t["backdated_decrease"],
                 t["billing_increment_changes"],
+                jera_table_id,
+                comparison_file_path,
             ),
         )
         new_id = cur.fetchone()[0]
@@ -1106,3 +1111,324 @@ def find_invalid_subject_detail(invalid_subject_id: int, subject: str) -> Option
         if row:
             return int(row[0]), (row[1] if row[1] is not None else None)
         return None
+
+
+# ─────────────────────── JERASOFT UPLOAD CONTROL ───────────────────────
+
+def set_jera_upload_flag(rate_upload_id: int, is_rate_approved_by_admin: bool, jera_table_id: Optional[int] = None) -> None:
+    """
+    Set the is_rate_approved_by_admin flag for a rate_upload record.
+    This acts as the 'button' to control JeraSoft uploads.
+    
+    Args:
+        rate_upload_id: ID from rate_uploads table
+        is_rate_approved_by_admin: True to enable JeraSoft upload, False to disable
+        jera_table_id: Optional JeraSoft table ID for this upload
+    """
+    # Set proper status for bulk uploads
+    upload_status = 'pending_bulk' if is_rate_approved_by_admin and jera_table_id else None
+    
+    sql = """
+        UPDATE rate_uploads 
+        SET is_rate_approved_by_admin = %s,
+            jera_table_id = COALESCE(%s, jera_table_id),
+            jera_upload_status = COALESCE(%s, jera_upload_status),
+            updated_at = NOW()
+        WHERE id = %s
+    """
+    
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (is_rate_approved_by_admin, jera_table_id, upload_status, rate_upload_id))
+        conn.commit()
+        print(f"🔄 Updated upload {rate_upload_id}: is_rate_approved_by_admin={is_rate_approved_by_admin}, table_id={jera_table_id}, status={upload_status}")
+        
+        if cur.rowcount > 0:
+            action = "enabled" if is_rate_approved_by_admin else "disabled"
+            print(f"✅ JeraSoft upload {action} for rate_upload_id {rate_upload_id}")
+        else:
+            print(f"⚠️ No rate_upload found with id {rate_upload_id}")
+
+def get_pending_jera_uploads() -> List[Dict[str, Any]]:
+    """
+    Get all rate_uploads that are flagged for JeraSoft upload but not yet uploaded.
+    
+    Returns:
+        List of dictionaries with rate_upload data ready for JeraSoft upload
+    """
+    sql = """
+        SELECT 
+            id, subject, sender_email, jera_table_id,
+            processed_at, total_rows,
+            created_at, updated_at
+        FROM rate_uploads 
+        WHERE is_rate_approved_by_admin = TRUE 
+        AND jera_upload_status IN ('pending', 'failed')
+        ORDER BY created_at ASC
+    """
+    
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
+        
+        columns = [desc[0] for desc in cur.description]
+        return [dict(zip(columns, row)) for row in rows]
+
+def update_jera_upload_status(rate_upload_id: int, status: str, 
+                             result: Optional[Dict] = None) -> None:
+    """
+    Update the JeraSoft upload status and result for a rate_upload.
+    
+    Args:
+        rate_upload_id: ID from rate_uploads table
+        status: 'pending', 'uploading', 'success', 'failed'
+        result: Optional result dictionary from JeraSoft upload
+    """
+    # Only store error messages as string when status is failed, otherwise null
+    error_message = None
+    if status == 'failed' and result:
+        if isinstance(result, dict):
+            # Extract error message from result dict
+            error_message = result.get('error', str(result))
+        else:
+            error_message = str(result)
+    
+    sql = """
+        UPDATE rate_uploads 
+        SET jera_upload_status = %s,
+            jera_upload_result = %s,
+            jera_uploaded_at = CASE WHEN %s = 'success' THEN NOW() ELSE jera_uploaded_at END,
+            updated_at = NOW()
+        WHERE id = %s
+    """
+    
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (status, error_message, status, rate_upload_id))
+        conn.commit()
+        
+        if status == 'success':
+            print(f"✅ JeraSoft upload SUCCESS for rate_upload_id {rate_upload_id}")
+        elif status == 'failed':
+            print(f"❌ JeraSoft upload FAILED for rate_upload_id {rate_upload_id}: {error_message}")
+        else:
+            print(f"📊 JeraSoft upload status updated to '{status}' for rate_upload_id {rate_upload_id}")
+
+def get_jera_upload_history(limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Get history of JeraSoft uploads with their status and results.
+    
+    Args:
+        limit: Maximum number of records to return
+        
+    Returns:
+        List of upload history records
+    """
+    sql = """
+        SELECT 
+            id, subject, sender_email, jera_table_id,
+            is_rate_approved_by_admin, jera_upload_status,
+            jera_upload_result, jera_uploaded_at,
+            total_rows, processed_at, created_at
+        FROM rate_uploads 
+        WHERE is_rate_approved_by_admin = TRUE
+        ORDER BY created_at DESC
+        LIMIT %s
+    """
+    
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (limit,))
+        rows = cur.fetchall()
+        
+        columns = [desc[0] for desc in cur.description]
+        return [dict(zip(columns, row)) for row in rows]
+
+def mark_rate_upload_for_jera(subject: str, sender_email: str, jera_table_id: int) -> Optional[int]:
+    """
+    Find and mark a rate_upload for JeraSoft upload based on subject and sender.
+    
+    Args:
+        subject: Email subject to match
+        sender_email: Sender email to match  
+        jera_table_id: JeraSoft table ID for upload
+        
+    Returns:
+        rate_upload_id if found and marked, None otherwise
+    """
+    # First find the rate_upload
+    find_sql = """
+        SELECT id FROM rate_uploads 
+        WHERE subject = %s AND sender_email = %s 
+        ORDER BY created_at DESC 
+        LIMIT 1
+    """
+    
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(find_sql, (subject, sender_email))
+        row = cur.fetchone()
+        
+        if row:
+            rate_upload_id = row[0]
+            set_jera_upload_flag(rate_upload_id, True, jera_table_id)
+            return rate_upload_id
+        else:
+            print(f"⚠️ No rate_upload found for subject '{subject}' from '{sender_email}'")
+            return None
+
+def mark_comparison_file_for_bulk_upload(comparison_file_path: str, 
+                                       subject: str, 
+                                       sender_email: str, 
+                                       jera_table_id: int) -> Optional[int]:
+    """
+    Mark a comparison file for BULK upload to JeraSoft.
+    This stores the file path for later bulk processing instead of individual rates.
+    
+    Args:
+        comparison_file_path: Absolute path to comparison result file
+        subject: Email subject to match
+        sender_email: Sender email to match
+        jera_table_id: JeraSoft table ID for upload
+        
+    Returns:
+        rate_upload_id if marked successfully, None otherwise
+    """
+    # Find the rate_upload record
+    find_sql = """
+        SELECT id FROM rate_uploads 
+        WHERE subject = %s AND sender_email = %s 
+        ORDER BY created_at DESC 
+        LIMIT 1
+    """
+    
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(find_sql, (subject, sender_email))
+        row = cur.fetchone()
+        
+        if row:
+            rate_upload_id = row[0]
+            
+            # Update with bulk upload info
+            update_sql = """
+                UPDATE rate_uploads SET
+                    is_rate_approved_by_admin = TRUE,
+                    jera_table_id = %s,
+                    jera_upload_status = 'pending_bulk',
+                    jera_upload_result = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+            """
+            
+            # Store file path and upload method in result JSON
+            upload_info = {
+                "upload_method": "bulk_file_upload",
+                "comparison_file": comparison_file_path,
+                "marked_at": datetime.now().isoformat(),
+                "status": "queued_for_bulk_upload"
+            }
+            
+            cur.execute(update_sql, (jera_table_id, Json(upload_info), rate_upload_id))
+            conn.commit()
+            
+            print(f"✅ Marked rate_upload_id {rate_upload_id} for BULK upload")
+            print(f"📁 File: {comparison_file_path}")
+            print(f"🎯 Target table: {jera_table_id}")
+            
+            return rate_upload_id
+        else:
+            print(f"⚠️ No rate_upload found for subject '{subject}' from '{sender_email}'")
+            return None
+
+def auto_update_status_on_import_flag_change():
+    """
+    Auto-update jera_upload_status when is_rate_approved_by_admin is manually changed to TRUE.
+    Also sets jera_table_id from attachment metadata if missing.
+    This should be called periodically (e.g., by cron job every minute).
+    """
+    
+    # First handle records that already have table_id
+    sql_with_table = """
+        UPDATE rate_uploads 
+        SET jera_upload_status = 'pending_bulk',
+            updated_at = NOW()
+        WHERE is_rate_approved_by_admin = TRUE 
+        AND jera_upload_status = 'pending'
+        AND jera_table_id IS NOT NULL
+    """
+    
+    # Then find records that need table_id from metadata
+    sql_find_missing = """
+        SELECT id, subject, sender_email 
+        FROM rate_uploads 
+        WHERE is_rate_approved_by_admin = TRUE 
+        AND jera_upload_status = 'pending'
+        AND jera_table_id IS NULL
+    """
+    
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            # First update records that already have table_id
+            cur.execute(sql_with_table)
+            rows_updated_with_table = cur.rowcount
+            
+            # Find records missing table_id  
+            cur.execute(sql_find_missing)
+            missing_table_records = cur.fetchall()
+            
+            rows_updated_missing = 0
+            
+            # For each record missing table_id, try to find it from metadata
+            for record_id, subject, sender_email in missing_table_records:
+                try:
+                    # Find attachment folder by sender email pattern
+                    import os
+                    import json
+                    from pathlib import Path
+                    
+                    sender_pattern = sender_email.replace("@", "_at_").replace(".", "_")
+                    attachments_dir = Path("attachments")
+                    
+                    table_id_found = None
+                    
+                    if attachments_dir.exists():
+                        for folder in attachments_dir.iterdir():
+                            if folder.is_dir() and sender_pattern in folder.name:
+                                metadata_file = folder / "metadata.json"
+                                if metadata_file.exists():
+                                    try:
+                                        with open(metadata_file) as f:
+                                            meta = json.load(f)
+                                            table_id_found = meta.get("table_id")
+                                            if table_id_found:
+                                                break
+                                    except Exception:
+                                        continue
+                    
+                    if table_id_found:
+                        # Update both table_id and status
+                        update_sql = """
+                            UPDATE rate_uploads 
+                            SET jera_table_id = %s,
+                                jera_upload_status = 'pending_bulk',
+                                updated_at = NOW()
+                            WHERE id = %s
+                        """
+                        cur.execute(update_sql, (table_id_found, record_id))
+                        rows_updated_missing += 1
+                        print(f"   🔧 ID {record_id}: Set table_id={table_id_found} and status=pending_bulk")
+                    else:
+                        print(f"   ⚠️ ID {record_id}: Could not find table_id in metadata")
+                        
+                except Exception as e:
+                    print(f"   ❌ ID {record_id}: Error finding table_id - {e}")
+            
+            conn.commit()
+            total_updated = rows_updated_with_table + rows_updated_missing
+            
+            if total_updated > 0:
+                print(f"🔄 Auto-updated {total_updated} record(s) from 'pending' to 'pending_bulk'")
+                print(f"   - With existing table_id: {rows_updated_with_table}")  
+                print(f"   - Found table_id from metadata: {rows_updated_missing}")
+            
+            return total_updated
+            
+    except Exception as e:
+        print(f"❌ Error auto-updating status: {e}")
+        return 0
