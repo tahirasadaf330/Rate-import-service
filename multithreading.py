@@ -626,7 +626,7 @@ def process_one_folder(folder: Path) -> str:
                 if jera_upload_enabled and jerasoft_table_id and len(result) >= min_rates:
                     try:
                         print(f"[{folder.name}] JeraSoft table {jerasoft_table_id} detected - comparison file ready for MANUAL bulk upload")
-                        print(f"[{folder.name}] ℹ️  To upload: Set import_to_jera = TRUE in database for this record")
+                        print(f"[{folder.name}] ℹ️  To upload: Set is_rate_approved_by_admin = TRUE in database for this record")
                         
                         # Store comparison file path in metadata for future manual upload
                         # No automatic marking - manual control required
@@ -636,7 +636,7 @@ def process_one_folder(folder: Path) -> str:
                         # Store file info for manual upload control
                         print(f"[{folder.name}] 📋 Comparison file ready: {out_path.name}")
                         print(f"[{folder.name}] 🎯 Target table: {jerasoft_table_id}")
-                        print(f"[{folder.name}] ⚡ Manual control: Set import_to_jera=TRUE in database to trigger bulk upload")
+                        print(f"[{folder.name}] ⚡ Manual control: Set is_rate_approved_by_admin=TRUE in database to trigger bulk upload")
                         
                         # Store upload info in metadata (for reference only)
                         meta.setdefault("jerasoft_upload", {})

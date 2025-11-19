@@ -1115,22 +1115,22 @@ def find_invalid_subject_detail(invalid_subject_id: int, subject: str) -> Option
 
 # ─────────────────────── JERASOFT UPLOAD CONTROL ───────────────────────
 
-def set_jera_upload_flag(rate_upload_id: int, import_to_jera: bool, jera_table_id: Optional[int] = None) -> None:
+def set_jera_upload_flag(rate_upload_id: int, is_rate_approved_by_admin: bool, jera_table_id: Optional[int] = None) -> None:
     """
-    Set the import_to_jera flag for a rate_upload record.
+    Set the is_rate_approved_by_admin flag for a rate_upload record.
     This acts as the 'button' to control JeraSoft uploads.
     
     Args:
         rate_upload_id: ID from rate_uploads table
-        import_to_jera: True to enable JeraSoft upload, False to disable
+        is_rate_approved_by_admin: True to enable JeraSoft upload, False to disable
         jera_table_id: Optional JeraSoft table ID for this upload
     """
     # Set proper status for bulk uploads
-    upload_status = 'pending_bulk' if import_to_jera and jera_table_id else None
+    upload_status = 'pending_bulk' if is_rate_approved_by_admin and jera_table_id else None
     
     sql = """
         UPDATE rate_uploads 
-        SET import_to_jera = %s,
+        SET is_rate_approved_by_admin = %s,
             jera_table_id = COALESCE(%s, jera_table_id),
             jera_upload_status = COALESCE(%s, jera_upload_status),
             updated_at = NOW()
@@ -1138,12 +1138,12 @@ def set_jera_upload_flag(rate_upload_id: int, import_to_jera: bool, jera_table_i
     """
     
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, (import_to_jera, jera_table_id, upload_status, rate_upload_id))
+        cur.execute(sql, (is_rate_approved_by_admin, jera_table_id, upload_status, rate_upload_id))
         conn.commit()
-        print(f"🔄 Updated upload {rate_upload_id}: import_to_jera={import_to_jera}, table_id={jera_table_id}, status={upload_status}")
+        print(f"🔄 Updated upload {rate_upload_id}: is_rate_approved_by_admin={is_rate_approved_by_admin}, table_id={jera_table_id}, status={upload_status}")
         
         if cur.rowcount > 0:
-            action = "enabled" if import_to_jera else "disabled"
+            action = "enabled" if is_rate_approved_by_admin else "disabled"
             print(f"✅ JeraSoft upload {action} for rate_upload_id {rate_upload_id}")
         else:
             print(f"⚠️ No rate_upload found with id {rate_upload_id}")
@@ -1161,7 +1161,7 @@ def get_pending_jera_uploads() -> List[Dict[str, Any]]:
             processed_at, total_rows,
             created_at, updated_at
         FROM rate_uploads 
-        WHERE import_to_jera = TRUE 
+        WHERE is_rate_approved_by_admin = TRUE 
         AND jera_upload_status IN ('pending', 'failed')
         ORDER BY created_at ASC
     """
@@ -1183,6 +1183,15 @@ def update_jera_upload_status(rate_upload_id: int, status: str,
         status: 'pending', 'uploading', 'success', 'failed'
         result: Optional result dictionary from JeraSoft upload
     """
+    # Only store error messages as string when status is failed, otherwise null
+    error_message = None
+    if status == 'failed' and result:
+        if isinstance(result, dict):
+            # Extract error message from result dict
+            error_message = result.get('error', str(result))
+        else:
+            error_message = str(result)
+    
     sql = """
         UPDATE rate_uploads 
         SET jera_upload_status = %s,
@@ -1193,10 +1202,15 @@ def update_jera_upload_status(rate_upload_id: int, status: str,
     """
     
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, (status, Json(result) if result else None, status, rate_upload_id))
+        cur.execute(sql, (status, error_message, status, rate_upload_id))
         conn.commit()
         
-        print(f"📊 JeraSoft upload status updated to '{status}' for rate_upload_id {rate_upload_id}")
+        if status == 'success':
+            print(f"✅ JeraSoft upload SUCCESS for rate_upload_id {rate_upload_id}")
+        elif status == 'failed':
+            print(f"❌ JeraSoft upload FAILED for rate_upload_id {rate_upload_id}: {error_message}")
+        else:
+            print(f"📊 JeraSoft upload status updated to '{status}' for rate_upload_id {rate_upload_id}")
 
 def get_jera_upload_history(limit: int = 50) -> List[Dict[str, Any]]:
     """
@@ -1211,11 +1225,11 @@ def get_jera_upload_history(limit: int = 50) -> List[Dict[str, Any]]:
     sql = """
         SELECT 
             id, subject, sender_email, jera_table_id,
-            import_to_jera, jera_upload_status,
+            is_rate_approved_by_admin, jera_upload_status,
             jera_upload_result, jera_uploaded_at,
             total_rows, processed_at, created_at
         FROM rate_uploads 
-        WHERE import_to_jera = TRUE
+        WHERE is_rate_approved_by_admin = TRUE
         ORDER BY created_at DESC
         LIMIT %s
     """
@@ -1294,7 +1308,7 @@ def mark_comparison_file_for_bulk_upload(comparison_file_path: str,
             # Update with bulk upload info
             update_sql = """
                 UPDATE rate_uploads SET
-                    import_to_jera = TRUE,
+                    is_rate_approved_by_admin = TRUE,
                     jera_table_id = %s,
                     jera_upload_status = 'pending_bulk',
                     jera_upload_result = %s,
@@ -1324,7 +1338,7 @@ def mark_comparison_file_for_bulk_upload(comparison_file_path: str,
 
 def auto_update_status_on_import_flag_change():
     """
-    Auto-update jera_upload_status when import_to_jera is manually changed to TRUE.
+    Auto-update jera_upload_status when is_rate_approved_by_admin is manually changed to TRUE.
     Also sets jera_table_id from attachment metadata if missing.
     This should be called periodically (e.g., by cron job every minute).
     """
@@ -1334,7 +1348,7 @@ def auto_update_status_on_import_flag_change():
         UPDATE rate_uploads 
         SET jera_upload_status = 'pending_bulk',
             updated_at = NOW()
-        WHERE import_to_jera = TRUE 
+        WHERE is_rate_approved_by_admin = TRUE 
         AND jera_upload_status = 'pending'
         AND jera_table_id IS NOT NULL
     """
@@ -1343,7 +1357,7 @@ def auto_update_status_on_import_flag_change():
     sql_find_missing = """
         SELECT id, subject, sender_email 
         FROM rate_uploads 
-        WHERE import_to_jera = TRUE 
+        WHERE is_rate_approved_by_admin = TRUE 
         AND jera_upload_status = 'pending'
         AND jera_table_id IS NULL
     """

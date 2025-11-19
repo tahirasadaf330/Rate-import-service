@@ -34,7 +34,7 @@ def get_pending_bulk_uploads() -> List[Dict[str, Any]]:
             jera_upload_status, jera_upload_result,
             total_rows, created_at, comparison_file_path
         FROM rate_uploads 
-        WHERE import_to_jera = TRUE 
+        WHERE is_rate_approved_by_admin = TRUE 
         AND jera_upload_status = 'pending_bulk'
         AND jera_table_id IS NOT NULL
         ORDER BY created_at ASC
@@ -49,6 +49,16 @@ def get_pending_bulk_uploads() -> List[Dict[str, Any]]:
 
 def update_bulk_upload_status(upload_id: int, status: str, result: Dict[str, Any] = None):
     """Update the upload status and result."""
+    
+    # Only store error messages as string when status is failed, otherwise null
+    error_message = None
+    if status == 'failed' and result:
+        if isinstance(result, dict):
+            # Extract error message from result dict
+            error_message = result.get('error', str(result))
+        else:
+            error_message = str(result)
+    
     sql = """
         UPDATE rate_uploads SET
             jera_upload_status = %s,
@@ -58,20 +68,21 @@ def update_bulk_upload_status(upload_id: int, status: str, result: Dict[str, Any
         WHERE id = %s
     """
     
-    from psycopg2.extras import Json
-    
     try:
         with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(sql, (status, Json(result or {}), status, upload_id))
+            cur.execute(sql, (status, error_message, status, upload_id))
             rows_affected = cur.rowcount
             conn.commit()
             
-            print(f"🔄 Database update: upload_id={upload_id}, status='{status}', rows_affected={rows_affected}")
+            if status == 'completed':
+                print(f"✅ SUCCESS: Upload {upload_id} completed successfully")
+            elif status == 'failed':
+                print(f"❌ FAILED: Upload {upload_id} failed - {error_message}")
+            else:
+                print(f"🔄 Database update: upload_id={upload_id}, status='{status}', rows_affected={rows_affected}")
             
             if rows_affected == 0:
                 print(f"⚠️ WARNING: No rows were updated for upload_id {upload_id}")
-            else:
-                print(f"✅ Successfully updated upload_id {upload_id} to status '{status}'")
                 
     except Exception as e:
         print(f"❌ Database update failed for upload_id {upload_id}: {e}")
@@ -83,7 +94,7 @@ def verify_upload_status(upload_id: int):
     """Verify the current status of an upload in the database."""
     sql = """
         SELECT id, jera_upload_status, jera_uploaded_at, 
-               jera_upload_result->>'status' as result_status
+               jera_upload_result as error_message
         FROM rate_uploads 
         WHERE id = %s
     """
@@ -129,19 +140,14 @@ def process_bulk_upload(upload: Dict[str, Any], dry_run: bool = False) -> bool:
         comparison_file = upload.get('comparison_file_path')
         
         if not comparison_file:
-            # Fallback: check the result JSON for legacy records
-            result_json = upload.get('jera_upload_result', {})
-            if isinstance(result_json, dict):
-                comparison_file = result_json.get('comparison_file')
-            
-            if not comparison_file:
-                print("⚠️ No comparison file in upload record, searching...")
-                print("❌ No comparison file found in upload record")
-                update_bulk_upload_status(upload_id, 'failed', {
-                    'error': 'comparison_file_not_found',
-                    'processed_at': datetime.now().isoformat()
-                })
-                return False
+            # No fallback needed - comparison_file_path column should be populated
+            print("⚠️ No comparison file path in upload record")
+            print("❌ No comparison file found in upload record")
+            update_bulk_upload_status(upload_id, 'failed', {
+                'error': 'comparison_file_not_found',
+                'processed_at': datetime.now().isoformat()
+            })
+            return False
         
         # Check if file exists
         if not os.path.exists(comparison_file):
@@ -227,10 +233,10 @@ def show_upload_history():
     sql = """
         SELECT id, subject, sender_email, jera_table_id,
                jera_upload_status, jera_uploaded_at, 
-               jera_upload_result->>'status' as result_status,
+               jera_upload_result as error_message,
                created_at
         FROM rate_uploads 
-        WHERE import_to_jera = TRUE 
+        WHERE is_rate_approved_by_admin = TRUE 
         ORDER BY created_at DESC 
         LIMIT 10
     """
@@ -314,7 +320,7 @@ def main():
         # No arguments provided - check for status updates first, then process
         from database import auto_update_status_on_import_flag_change
         
-        # First, check for any manual import_to_jera changes
+        # First, check for any manual is_rate_approved_by_admin changes
         updated_count = auto_update_status_on_import_flag_change()
         
         # Then check for pending uploads and process automatically

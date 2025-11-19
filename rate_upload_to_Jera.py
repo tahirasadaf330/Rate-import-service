@@ -16,7 +16,7 @@ WHAT IT DOES:
 
 WHEN TO USE:
 • Called by rate_upload_service.py for approved bulk uploads
-• Processes files from database records marked with import_to_jera=TRUE
+• Processes files from database records marked with is_rate_approved_by_admin=TRUE
 • Can be used standalone for direct rate file uploads to JeraSoft
 
 KEY FUNCTIONS:
