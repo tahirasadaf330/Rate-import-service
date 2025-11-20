@@ -20,7 +20,8 @@ BILLING_PAIRS = [
     ('first_increment', 'additional_increment'),
     ('interval_1', 'interval_n'),
     ('min_volume','interval'),
-    ('mc', 'ci'),  # Added for Interval 1/Interval N columns
+    ('mc', 'ci'),
+    ('rounding', 'rounding'),
 ]
 
 EXCEL_EPOCH = datetime(1899, 12, 30)          # Excel’s epoch (PC versions)
@@ -186,6 +187,7 @@ def _synthesize_billing_increment(df: pd.DataFrame) -> pd.DataFrame:
         ('interval_1', 'interval_n'),
         ('min_volume','interval'),
         ('mc', 'ci'),
+        ('rounding', 'rounding'),
     ]
 
     for a, b in pairs:
@@ -612,6 +614,7 @@ ALIAS_MAP = {
     'price_peak': 'Rate',
     'pricemin': 'Rate',
     'recurring_charge': 'Rate',
+    'allday': 'Rate',
     # Effective Date
     'effective_date': 'Effective Date',
     'effective': 'Effective Date',
@@ -1301,7 +1304,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\rates-all-Titan_International_Wholesale_Inc-for-STDIN--all_time-2025-11-11_000000.csv"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\Acmetel_USA_LLC_Rate_Sheet_for_HAYO-LLC-2025-11-19.xlsx"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
