@@ -734,7 +734,16 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
                         status="pending"
                     )
 
-                    found = find_invalid_subject_detail(parent_id, subject)
+                    def strip_date_from_subject(subj: str) -> str:
+                        # Remove date patterns like DD/MM/YYYY or YYYY-MM-DD
+                        # Also remove time if present
+                        subj = re.sub(r"\b\d{2}/\d{2}/\d{4}\b", "", subj)
+                        subj = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", "", subj)
+                        subj = re.sub(r"\b\d{2}:\d{2}:\d{2}\b", "", subj)
+                        return re.sub(r"\s+", " ", subj).strip()
+
+                    subject_nodate = strip_date_from_subject(subject)
+                    found = find_invalid_subject_detail(parent_id, subject_nodate)
                     if found:
                         detail_id, jera_table_name = found
                         if jera_table_name:
@@ -746,8 +755,8 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
                             continue  # still pending approval
                     else:
                         # New subject for this sender → record & wait for approval
-                        _ = insert_invalid_subject_detail(parent_id, subject, None)
-                        print(f"  -> logged new invalid subject for approval")
+                        _ = insert_invalid_subject_detail(parent_id, subject_nodate, None)
+                        print(f"  -> logged new invalid subject for approval (date ignored)")
                         continue
 
                 except Exception as e:
