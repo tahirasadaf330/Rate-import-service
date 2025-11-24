@@ -95,22 +95,40 @@ _CURRENCY_CODES_RE = re.compile(rf"(?i)\b(?:{_CURRENCY_CODES})\b")
 _CURRENCY_SYMBOLS_RE = re.compile(r"[$£€¥₹₩₽₺₫₪₴₦₱₲₵₡₭฿₮₸₼]")
 
 def _preclean_header_token(s: str) -> str:
-    """Strip currency symbols/codes and common junk from HEADER labels."""
+    """Strip currency symbols and common junk from HEADER labels."""
     s = str(s).replace("\n", " ")
     s = _CURRENCY_SYMBOLS_RE.sub(" ", s)          # $, €, etc.
     s = re.sub(r"\(.*?\)", " ", s)                # drop parentheticals like (USD)
-    s = _CURRENCY_CODES_RE.sub(" ", s)            # USD, EUR, etc.
+    # 🚫 DO NOT blindly strip currency codes from whole header like 'USD'
+    # s = _CURRENCY_CODES_RE.sub(" ", s)          # ← remove this line or comment it out
     s = re.sub(r"(?i)\bper\s*(min(?:ute)?|sec(?:ond)?)\b", " ", s)
     s = re.sub(r"[/\\|:]+", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
+
 def _strip_currency_words_from_key(key: str) -> str:
-    """After _norm(), remove currency tokens that became words (e.g. rate_usd)."""
-    # kill leading/trailing or middle _usd/_eur tokens
-    key = re.sub(rf"(?:^|_)(?:{_CURRENCY_CODES})(?=_|$)", "", key, flags=re.I)
-    key = re.sub(r"_+", "_", key).strip("_")
-    return key
+    """
+    Remove currency codes only when they are part of a longer key (rate_usd),
+    but if the entire key is just 'usd', keep it so it maps to Rate.
+    """
+    # If the whole key is exactly a currency code, keep it
+    if re.fullmatch(rf"(?:{_CURRENCY_CODES})", key, flags=re.I):
+        return key
+
+    # Otherwise strip currency suffixes/prefixes
+    cleaned = re.sub(
+        rf"(?:^|_)(?:{_CURRENCY_CODES})(?=_|$)", 
+        "", 
+        key, 
+        flags=re.I
+    )
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+
+    # If stripping removed everything, keep original key
+    return cleaned or key
+
+
 
 #________________________________handeling seperate/duplicate billing increment columns ──────────────────────────────────
 
@@ -613,7 +631,7 @@ ALIAS_MAP = {
     'dial_codes': 'Dst Code',
     'area_code': 'Dst Code',
     'prefix': 'Dst Code',
-
+    'dial_code': 'Dst Code',
     # Rate
     'rate': 'Rate',
     'rates': 'Rate',
@@ -630,6 +648,7 @@ ALIAS_MAP = {
     'pricemin': 'Rate',
     'recurring_charge': 'Rate',
     'allday': 'Rate',
+    'usd': 'Rate',
     # Effective Date
     'effective_date': 'Effective Date',
     'effective': 'Effective Date',
@@ -1319,7 +1338,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\ORTP_99922.xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\CPL_HAYOTEL_TES-2025121-63820_.xls"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
