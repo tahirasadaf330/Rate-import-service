@@ -76,6 +76,11 @@ def insert_rejected_email(
     Insert a single rejected email row and return its id.
     Table columns (managed by DB): id (PK), created_at, updated_at auto.
     """
+    from valid_emails import get_verified_senders
+    # Only insert if sender is authorized
+    if sender_email and sender_email not in get_verified_senders():
+        print(f"Skipping unauthorized sender: {sender_email}")
+        return -1  # or handle as needed
     sql = """
         INSERT INTO rejected_emails
         (sender_email, subject, category, notes, received_at, processed_at, created_at, updated_at)
@@ -108,13 +113,19 @@ def insert_rejected_emails(rows: Iterable[Mapping[str, Any]]) -> List[int]:
     """
     # collect values in the order expected by the DB
     values = []
+    from valid_emails import get_verified_senders
     for r in rows:
         # ensure category exists (raise so caller notices bad input)
         category = r.get("category")
+        sender_email = r.get("sender_email")
         if category is None:
             raise ValueError("Each row must include a 'category' value.")
+        # Only insert if sender is authorized
+        if sender_email and sender_email not in get_verified_senders():
+            print(f"Skipping unauthorized sender: {sender_email}")
+            continue
         values.append((
-            r.get("sender_email"),
+            sender_email,
             r.get("subject"),
             str(category),
             r.get("notes"),
