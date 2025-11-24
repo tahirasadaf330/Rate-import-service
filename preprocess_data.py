@@ -287,16 +287,27 @@ from datetime import date, datetime
 
 def _raw_from_ws(ws) -> pd.DataFrame:
     rows_as_text = []
-    for row in ws.iter_rows(values_only=False):
+    max_rows = 2000  # Limit to 2000 rows for performance
+    empty_row_limit = 100  # Stop if 100 consecutive empty rows
+    empty_count = 0
+    for i, row in enumerate(ws.iter_rows(values_only=False)):
+        if i >= max_rows:
+            break
         out = []
         for c in row:
             v = c.value
-            # Don’t force an Excel-specific format; just stringify whatever is there.
-            # This yields ISO-like strings for date/datetime and preserves text inputs.
             if v is None:
                 out.append("")
             else:
-                out.append(str(v))  # datetime/date -> "YYYY-MM-DD[ HH:MM:SS]"; text stays as-is
+                out.append(str(v))
+        # Skip all-empty rows
+        if all(cell.strip() == "" for cell in out):
+            empty_count += 1
+            if empty_count >= empty_row_limit:
+                break
+            continue
+        else:
+            empty_count = 0
         rows_as_text.append(out)
 
     raw = pd.DataFrame(rows_as_text)
@@ -480,6 +491,10 @@ def detect_header_row(raw: pd.DataFrame) -> int:
         if idx >= max_row_limit:
             break  # Stop searching after 1000 rows
 
+        # Skip rows that are all empty or all NaN
+        if all((pd.isna(x) or str(x).strip() == "") for x in row):
+            continue
+
         # raw cell texts on this row (skip NaN)
         cells = [x for x in row if pd.notna(x)]
         precleaned = [_preclean_header_token(x) for x in cells]
@@ -487,7 +502,7 @@ def detect_header_row(raw: pd.DataFrame) -> int:
         mapped = [ALIAS_MAP.get(n) or _match_alias_substring(n) for n in normed]
 
         covered = {m for m in mapped if m}
-        
+
         if idx <=10:
             print(f"DEBUG TARGETS: {targets}")
             print("DEBUG IN THE DETECT HEADER ROW: covered so far", covered)
@@ -1304,7 +1319,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\Acmetel_USA_LLC_Rate_Sheet_for_HAYO-LLC-2025-11-19.xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\ORTP_99922.xlsx"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
