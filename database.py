@@ -81,26 +81,16 @@ def insert_rejected_email(
     if sender_email and sender_email not in get_verified_senders():
         print(f"Skipping unauthorized sender: {sender_email}")
         return -1  # or handle as needed
-    # Deduplication: check for existing internetMessageId
-    internet_msg_id = None
-    if notes and isinstance(notes, dict):
-        internet_msg_id = notes.get('internetMessageId')
-    sql_check = "SELECT id FROM rejected_emails WHERE internetMessageId = %s"
+    sql = """
+        INSERT INTO rejected_emails
+        (sender_email, subject, category, notes, received_at, processed_at, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+        RETURNING id;
+    """
     with get_conn() as conn, conn.cursor() as cur:
-        if internet_msg_id:
-            cur.execute(sql_check, (internet_msg_id,))
-            if cur.fetchone():
-                print(f"Duplicate rejected email: {internet_msg_id}")
-                return -1
-        sql = """
-            INSERT INTO rejected_emails
-            (sender_email, subject, category, notes, received_at, processed_at, created_at, updated_at, internetMessageId)
-            VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW(), %s)
-            RETURNING id;
-        """
         cur.execute(
             sql,
-            (sender_email, subject, category, notes, received_at, processed_at, internet_msg_id),
+            (sender_email, subject, category, notes, received_at, processed_at),
         )
         new_id = cur.fetchone()[0]
         conn.commit()
@@ -134,26 +124,13 @@ def insert_rejected_emails(rows: Iterable[Mapping[str, Any]]) -> List[int]:
         if sender_email and sender_email not in get_verified_senders():
             print(f"Skipping unauthorized sender: {sender_email}")
             continue
-        internet_msg_id = None
-        notes = r.get("notes")
-        if notes and isinstance(notes, dict):
-            internet_msg_id = notes.get('internetMessageId')
-        # Deduplication: check for existing internetMessageId
-        sql_check = "SELECT id FROM rejected_emails WHERE internetMessageId = %s"
-        with get_conn() as conn, conn.cursor() as cur:
-            if internet_msg_id:
-                cur.execute(sql_check, (internet_msg_id,))
-                if cur.fetchone():
-                    print(f"Duplicate rejected email: {internet_msg_id}")
-                    continue
         values.append((
             sender_email,
             r.get("subject"),
             str(category),
-            notes,
+            r.get("notes"),
             r.get("received_at"),
             r.get("processed_at"),
-            internet_msg_id,
         ))
 
     if not values:
@@ -167,15 +144,15 @@ def insert_rejected_emails(rows: Iterable[Mapping[str, Any]]) -> List[int]:
 
     sql = """
         INSERT INTO rejected_emails
-        (sender_email, subject, category, notes, received_at, processed_at, created_at, updated_at, internetMessageId)
+        (sender_email, subject, category, notes, received_at, processed_at, created_at, updated_at)
         VALUES %s
         RETURNING id;
     """
 
     with get_conn() as conn, conn.cursor() as cur:
         # execute_values will expand the VALUES %s placeholder into many tuples
-        # Template to match the 9 columns (6 data + 2 timestamps + internetMessageId)
-        template = "(%s,%s,%s,%s,%s,%s,NOW(),NOW(),%s)"
+        # Template to match the 8 columns (6 data + 2 timestamps)
+        template = "(%s,%s,%s,%s,%s,%s,NOW(),NOW())"
         execute_values(cur, sql, values, template=template, page_size=100)
         ids = [row[0] for row in cur.fetchall()]
         conn.commit()
@@ -231,8 +208,11 @@ def insert_rejected_email_row(
 def push_failed_emails_json_to_db(path: Optional[str | Path] = None) -> tuple[int, int, int]:
     """
     Read failed_emails.json and insert any entries not yet pushed (no 'already_pushed': true)
-    into the rejected_emails table using a bulk insert. After a successful insert, mark the JSON
-    entry with 'already_pushed': true and atomically rewrite the JSON file.
+    into the rejected_emails table using a bulk insert.
+
+    To avoid duplicate DB inserts if the JSON write fails, we now:
+      1) Mark entries as already_pushed and write JSON FIRST
+      2) THEN insert into DB
 
     Returns:
         (inserted_count, skipped_already_pushed, errors)
@@ -258,6 +238,7 @@ def push_failed_emails_json_to_db(path: Optional[str | Path] = None) -> tuple[in
     skipped = 0
     errors = 0
     print(f"DEBUG: Pushing failed emails from {json_path}, categories: {list(buckets.keys())}")
+
     # Prepare a list of rows to bulk-insert and keep references to the original entries
     rows_to_insert: list[dict] = []
     entry_refs: list[dict] = []
@@ -303,25 +284,42 @@ def push_failed_emails_json_to_db(path: Optional[str | Path] = None) -> tuple[in
         print(f"(info) no new failed emails to push. skipped={skipped}")
         return (0, skipped, errors)
 
-    # Attempt bulk insert
+    # ─────────────────────────────────────────────────────────
+    # 1) Mark all referenced entries as already_pushed IN MEMORY
+    # ─────────────────────────────────────────────────────────
+    for entry in entry_refs:
+        entry["already_pushed"] = True
+
+    # ─────────────────────────────────────────────────────────
+    # 2) Persist the updated JSON BEFORE touching the database
+    #    If this fails, we abort to avoid duplicate DB inserts
+    # ─────────────────────────────────────────────────────────
+    try:
+        _atomic_write_json(json_path, data)
+    except Exception as e:
+        errors += 1
+        print(f"(warn) failed to update {json_path} before DB insert: {e}")
+        print("(warn) aborting rejected_emails DB insert to avoid duplicates on next run")
+        return (0, skipped, errors)
+
+    # ─────────────────────────────────────────────────────────
+    # 3) Now safely insert into DB (at-most-once semantics)
+    # ─────────────────────────────────────────────────────────
     try:
         ids = insert_rejected_emails(rows_to_insert)  # expects list of ids
+
         # Normalize returned ids to a list
         if isinstance(ids, int):
             ids = [ids]
         elif ids is None:
             ids = []
 
-        # Mark the corresponding JSON entries as pushed
-        for i in range(min(len(ids), len(entry_refs))):
-            entry_refs[i]["already_pushed"] = True
         inserted = len(ids)
 
     except Exception as bulk_exc:
         print(f"(warn) bulk insert failed: {bulk_exc}. Falling back to single-row inserts.")
         # Fallback: try inserting row-by-row so partial progress is possible
         for i, row in enumerate(rows_to_insert):
-            entry = entry_refs[i]
             try:
                 # Prefer single-row API if available; otherwise call bulk API with single item
                 try:
@@ -338,21 +336,11 @@ def push_failed_emails_json_to_db(path: Optional[str | Path] = None) -> tuple[in
                     res = insert_rejected_emails([row])
                     new_id = (res[0] if res else 0) if isinstance(res, list) else (res or 0)
 
-                # If we got here without exception, mark pushed
-                entry["already_pushed"] = True
+                # JSON was already marked; we only count successes now
                 inserted += 1
             except Exception as single_exc:
                 errors += 1
                 print(f"(warn) failed to insert rejected email (category={row['category']}): {single_exc}")
-
-    # Persist the updated JSON with the already_pushed flags
-    try:
-        _atomic_write_json(json_path, data)
-    except Exception as e:
-        # If this write fails, you've still inserted rows, but flags weren't saved.
-        # Next run may try to re-insert. Consider adding a uniqueness constraint if needed.
-        errors += 1
-        print(f"(warn) failed to update {json_path} with 'already_pushed' flags: {e}")
 
     print(f"(ok) rejected_emails sync → inserted={inserted}, skipped={skipped}, errors={errors}")
     return (inserted, skipped, errors)
