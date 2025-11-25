@@ -81,16 +81,26 @@ def insert_rejected_email(
     if sender_email and sender_email not in get_verified_senders():
         print(f"Skipping unauthorized sender: {sender_email}")
         return -1  # or handle as needed
-    sql = """
-        INSERT INTO rejected_emails
-        (sender_email, subject, category, notes, received_at, processed_at, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
-        RETURNING id;
-    """
+    # Deduplication: check for existing internetMessageId
+    internet_msg_id = None
+    if notes and isinstance(notes, dict):
+        internet_msg_id = notes.get('internetMessageId')
+    sql_check = "SELECT id FROM rejected_emails WHERE internetMessageId = %s"
     with get_conn() as conn, conn.cursor() as cur:
+        if internet_msg_id:
+            cur.execute(sql_check, (internet_msg_id,))
+            if cur.fetchone():
+                print(f"Duplicate rejected email: {internet_msg_id}")
+                return -1
+        sql = """
+            INSERT INTO rejected_emails
+            (sender_email, subject, category, notes, received_at, processed_at, created_at, updated_at, internetMessageId)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW(), %s)
+            RETURNING id;
+        """
         cur.execute(
             sql,
-            (sender_email, subject, category, notes, received_at, processed_at),
+            (sender_email, subject, category, notes, received_at, processed_at, internet_msg_id),
         )
         new_id = cur.fetchone()[0]
         conn.commit()
@@ -124,13 +134,26 @@ def insert_rejected_emails(rows: Iterable[Mapping[str, Any]]) -> List[int]:
         if sender_email and sender_email not in get_verified_senders():
             print(f"Skipping unauthorized sender: {sender_email}")
             continue
+        internet_msg_id = None
+        notes = r.get("notes")
+        if notes and isinstance(notes, dict):
+            internet_msg_id = notes.get('internetMessageId')
+        # Deduplication: check for existing internetMessageId
+        sql_check = "SELECT id FROM rejected_emails WHERE internetMessageId = %s"
+        with get_conn() as conn, conn.cursor() as cur:
+            if internet_msg_id:
+                cur.execute(sql_check, (internet_msg_id,))
+                if cur.fetchone():
+                    print(f"Duplicate rejected email: {internet_msg_id}")
+                    continue
         values.append((
             sender_email,
             r.get("subject"),
             str(category),
-            r.get("notes"),
+            notes,
             r.get("received_at"),
             r.get("processed_at"),
+            internet_msg_id,
         ))
 
     if not values:
@@ -144,15 +167,15 @@ def insert_rejected_emails(rows: Iterable[Mapping[str, Any]]) -> List[int]:
 
     sql = """
         INSERT INTO rejected_emails
-        (sender_email, subject, category, notes, received_at, processed_at, created_at, updated_at)
+        (sender_email, subject, category, notes, received_at, processed_at, created_at, updated_at, internetMessageId)
         VALUES %s
         RETURNING id;
     """
 
     with get_conn() as conn, conn.cursor() as cur:
         # execute_values will expand the VALUES %s placeholder into many tuples
-        # Template to match the 8 columns (6 data + 2 timestamps)
-        template = "(%s,%s,%s,%s,%s,%s,NOW(),NOW())"
+        # Template to match the 9 columns (6 data + 2 timestamps + internetMessageId)
+        template = "(%s,%s,%s,%s,%s,%s,NOW(),NOW(),%s)"
         execute_values(cur, sql, values, template=template, page_size=100)
         ids = [row[0] for row in cur.fetchall()]
         conn.commit()
