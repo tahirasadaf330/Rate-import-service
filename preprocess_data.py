@@ -22,6 +22,7 @@ BILLING_PAIRS = [
     ('min_volume','interval'),
     ('mc', 'ci'),
     ('rounding', 'rounding'),
+    ('min' ,'inc'),
 ]
 
 EXCEL_EPOCH = datetime(1899, 12, 30)          # Excel’s epoch (PC versions)
@@ -206,6 +207,7 @@ def _synthesize_billing_increment(df: pd.DataFrame) -> pd.DataFrame:
         ('min_volume','interval'),
         ('mc', 'ci'),
         ('rounding', 'rounding'),
+        ('min' ,'inc'),
     ]
 
     for a, b in pairs:
@@ -632,6 +634,7 @@ ALIAS_MAP = {
     'area_code': 'Dst Code',
     'prefix': 'Dst Code',
     'dial_code': 'Dst Code',
+    'breakout' : 'Dst Code',
     # Rate
     'rate': 'Rate',
     'rates': 'Rate',
@@ -649,6 +652,7 @@ ALIAS_MAP = {
     'recurring_charge': 'Rate',
     'allday': 'Rate',
     'usd': 'Rate',
+    'future_rate': 'Rate',
     # Effective Date
     'effective_date': 'Effective Date',
     'effective': 'Effective Date',
@@ -660,7 +664,7 @@ ALIAS_MAP = {
     'effectivedate': 'Effective Date',
     'efective_date': 'Effective Date',
     'activation_date': 'Effective Date',
-
+    'future_rate_effective_date': 'Effective Date',
     # Billing Increment
     'billing_increment': 'Billing Increment',
     'billing_increament': 'Billing Increment',   # common typo
@@ -1338,7 +1342,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\CPL_HAYOTEL_TES-2025121-63820_.xls"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\Hayo_Telecom-USD-A-Z-Retail-2025-11-27.xlsx"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 

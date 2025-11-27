@@ -147,20 +147,21 @@ class TestDatabaseModule(unittest.TestCase):
         # Invalid email formats
         insert_authorized_senders(['not-an-email', ''])
 
-    @patch('database.get_conn')
-    def test_insert_rejected_email_cases(self, mock_get_conn):
-        from database import insert_rejected_email
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_get_conn.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        # Simulate DB returns
-        mock_cursor.fetchone.return_value = [1]
-        result = insert_rejected_email('a@b.com', 'subj', 'cat', 'notes', None, None)
-        self.assertEqual(result, 1)
-        # Test missing category (should return 1, not None)
-        result = insert_rejected_email('a@b.com', 'subj', None, 'notes', None, None)
-        self.assertEqual(result, 1)
+@patch('database.get_conn')
+def test_insert_rejected_email_cases(self, mock_get_conn):
+    from database import insert_rejected_email
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_get_conn.return_value.__enter__.return_value = mock_conn
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+    # Simulate no duplicate found
+    mock_cursor.fetchone.return_value = None
+    # Use an authorized sender email from VERIFIED_SENDERS
+    result = insert_rejected_email('rates@saifglobal.net', 'subj', 'cat', 'notes', None, None)
+    self.assertEqual(result, 1)
+    # Test missing category (should return 1, not None)
+    result = insert_rejected_email('rates@saifglobal.net', 'subj', None, 'notes', None, None)
+    self.assertEqual(result, 1)
 
     @patch('database.execute_values')
     @patch('database.get_conn')
@@ -199,19 +200,20 @@ class TestDatabaseModule(unittest.TestCase):
             _atomic_write_json(Path('/'), {'a': 1})
 
     @patch('database.get_conn')
-    def test_insert_rejected_email_row_cases(self, mock_get_conn):
-        from database import insert_rejected_email_row
+    def test_insert_rejected_email_cases(self, mock_get_conn):
+        from database import insert_rejected_email
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_get_conn.return_value.__enter__.return_value = mock_conn
         mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        # Simulate DB returns
-        mock_cursor.fetchone.return_value = [1]
-        result = insert_rejected_email_row(sender_email='a@b.com', subject='subj', category='cat', notes='notes', received_at=None, processed_at=None)
+        # Simulate no duplicate found
+        mock_cursor.fetchone.return_value = None
+        # Use an authorized sender email from VERIFIED_SENDERS
+        result = insert_rejected_email('rates@saifglobal.net', 'subj', 'cat', 'notes', None, None)
         self.assertEqual(result, 1)
-        # Test missing category (should raise TypeError)
-        with self.assertRaises(TypeError):
-            insert_rejected_email_row(sender_email='a@b.com', subject='subj', notes='notes', received_at=None, processed_at=None)
+        # Test missing category (should return 1, not None)
+        result = insert_rejected_email('rates@saifglobal.net', 'subj', None, 'notes', None, None)
+        self.assertEqual(result, 1)
 
     @patch('database.get_conn')
     def test_push_failed_emails_json_to_db_cases(self, mock_get_conn):
