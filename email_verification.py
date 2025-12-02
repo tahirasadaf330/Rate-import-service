@@ -309,32 +309,40 @@ def b64url_json(seg: str):
 def get_token(tenant_id: str, client_id: str, client_secret: str, verbose=False) -> str:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
-    authority = f"https://login.microsoftonline.com/{tenant_id}"
-    logger.info(f"Auth authority: {authority}")
-    app = ConfidentialClientApplication(client_id, authority=authority, client_credential=client_secret)
-    
-    def acquire():
-        return app.acquire_token_for_client(scopes=SCOPES)
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(acquire)
+
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    data = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "grant_type": "client_credentials",
+        "scope": "https://graph.microsoft.com/.default",
+    }
+
+    logger.info(f"Auth token URL: {token_url}")
+    try:
+        resp = requests.post(token_url, data=data, timeout=(5, 120))  # 5s connect, 120s read
+    except requests.exceptions.Timeout as e:
+        logger.error(f"Token request timed out: {e}")
+        raise
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Token request failed: {e!r}")
+        raise
+
+    if resp.status_code != 200:
         try:
-            tok = future.result(timeout=120)
-            logger.info("Token acquired successfully.")
-        except FuturesTimeoutError as e:
-            logger.error(f"Token acquisition timed out (120 seconds): {e}")
-            raise Exception("Token acquisition timed out (120 seconds)")
-        except Exception as e:
-            timeout_keywords = ["timeout", "timed out"]
-            if hasattr(e, 'args') and any(any(kw in str(arg).lower() for kw in timeout_keywords) for arg in e.args):
-                logger.error(f"Token acquisition timed out: {e}")
-            else:
-                logger.error(f"Token acquisition failed: {e}")
-            raise
-    if "access_token" not in tok:
-        logger.error(f"Token error: {json.dumps(tok, indent=2)}")
-        sys.exit(1)
+            logger.error(f"Token error: {json.dumps(resp.json(), indent=2)}")
+        except Exception:
+            logger.error(f"Token error text: {resp.text[:2000]}")
+        raise RuntimeError("Failed to get token from Microsoft")
+
+    tok = resp.json()
+    access_token = tok.get("access_token")
+    if not access_token:
+        logger.error(f"Token response missing access_token: {tok}")
+        raise RuntimeError("No access_token in token response")
+
     if verbose or DEBUG:
-        parts = tok["access_token"].split(".")
+        parts = access_token.split(".")
         if len(parts) > 1:
             try:
                 payload = b64url_json(parts[1])
@@ -342,7 +350,8 @@ def get_token(tenant_id: str, client_id: str, client_secret: str, verbose=False)
                 logger.info(f"Token exp (unix): {payload.get('exp')}")
             except Exception as e:
                 logger.warning(f"Token payload decode failed: {repr(e)}")
-    return tok["access_token"]
+
+    return access_token
 
 def get_session(access_token: str) -> requests.Session:
     s = requests.Session()
