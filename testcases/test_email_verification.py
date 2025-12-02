@@ -6,6 +6,47 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 class TestEmailVerification(unittest.TestCase):
+    def test_get_token_30s_timeout(self):
+        import time
+        from unittest.mock import patch, MagicMock
+        with patch('email_verification.ConfidentialClientApplication') as mock_app, \
+             patch('logging.getLogger') as mock_logger:
+            instance = mock_app.return_value
+            # Simulate a hanging token acquisition
+            def slow_acquire(*args, **kwargs):
+                time.sleep(31)
+            instance.acquire_token_for_client.side_effect = slow_acquire
+            logger = MagicMock()
+            mock_logger.return_value = logger
+            with self.assertRaises(Exception) as cm:
+                email_verification.get_token("tenant", "client", "secret")
+            self.assertIn("Token acquisition timed out (30 seconds)", str(cm.exception))
+            logger.error.assert_any_call("Token acquisition timed out (30 seconds): ")
+
+    def test_get_token_timeout_logging(self):
+        with patch('email_verification.ConfidentialClientApplication') as mock_app, \
+             patch('logging.getLogger') as mock_logger:
+            instance = mock_app.return_value
+            logger = MagicMock()
+            mock_logger.return_value = logger
+            # Simulate 'timeout' error
+            instance.acquire_token_for_client.side_effect = Exception("timeout occurred")
+            with self.assertRaises(Exception):
+                email_verification.get_token("tenant", "client", "secret")
+            logger.error.assert_any_call("Token acquisition timed out: timeout occurred")
+
+            # Simulate 'timed out' error
+            instance.acquire_token_for_client.side_effect = Exception("Request timed out")
+            with self.assertRaises(Exception):
+                email_verification.get_token("tenant", "client", "secret")
+            logger.error.assert_any_call("Token acquisition timed out: Request timed out")
+            logger.error.assert_any_call("Token acquisition timed out: Request timed out")
+
+            # Simulate other error
+            instance.acquire_token_for_client.side_effect = Exception("other error")
+            with self.assertRaises(Exception):
+                email_verification.get_token("tenant", "client", "secret")
+            logger.error.assert_any_call("Token acquisition failed: other error")
     def test_load_failed_log_and_atomic_write(self):
         # Should load default schema if file missing
         with patch('email_verification.FAILED_EMAILS_PATH', Path('nonexistent_failed_emails.json')):

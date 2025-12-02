@@ -30,7 +30,9 @@ from urllib.parse import quote
 # from open_ai import validate_subject_openai
 
 from valid_emails import get_verified_senders  # list of allowed sender emails
-
+from msal import ConfidentialClientApplication
+import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 # ========================= Debug Toggles =========================
 DEBUG = False         # ultra-verbose prints for every step
 DRY_RUN = False      # if True, do not write files; only log decisions
@@ -305,22 +307,41 @@ def b64url_json(seg: str):
     return json.loads(base64.urlsafe_b64decode(seg.encode()))
 
 def get_token(tenant_id: str, client_id: str, client_secret: str, verbose=False) -> str:
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
     authority = f"https://login.microsoftonline.com/{tenant_id}"
-    dbg("Auth authority:", authority)
+    logger.info(f"Auth authority: {authority}")
     app = ConfidentialClientApplication(client_id, authority=authority, client_credential=client_secret)
-    tok = app.acquire_token_for_client(scopes=SCOPES)
+    
+    def acquire():
+        return app.acquire_token_for_client(scopes=SCOPES)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(acquire)
+        try:
+            tok = future.result(timeout=120)
+            logger.info("Token acquired successfully.")
+        except FuturesTimeoutError as e:
+            logger.error(f"Token acquisition timed out (120 seconds): {e}")
+            raise Exception("Token acquisition timed out (120 seconds)")
+        except Exception as e:
+            timeout_keywords = ["timeout", "timed out"]
+            if hasattr(e, 'args') and any(any(kw in str(arg).lower() for kw in timeout_keywords) for arg in e.args):
+                logger.error(f"Token acquisition timed out: {e}")
+            else:
+                logger.error(f"Token acquisition failed: {e}")
+            raise
     if "access_token" not in tok:
-        print("Token error:", json.dumps(tok, indent=2), file=sys.stderr)
+        logger.error(f"Token error: {json.dumps(tok, indent=2)}")
         sys.exit(1)
     if verbose or DEBUG:
         parts = tok["access_token"].split(".")
         if len(parts) > 1:
             try:
                 payload = b64url_json(parts[1])
-                dbg("Token roles:", payload.get("roles"))
-                dbg("Token exp (unix):", payload.get("exp"))
+                logger.info(f"Token roles: {payload.get('roles')}")
+                logger.info(f"Token exp (unix): {payload.get('exp')}")
             except Exception as e:
-                dbg("Token payload decode failed:", repr(e))
+                logger.warning(f"Token payload decode failed: {repr(e)}")
     return tok["access_token"]
 
 def get_session(access_token: str) -> requests.Session:
