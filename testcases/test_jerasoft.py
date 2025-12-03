@@ -127,5 +127,69 @@ class TestJerasoft(unittest.TestCase):
         self.assertEqual(result['table_id'], 42)
         self.assertEqual(result['saved_to'], 'dummy.xlsx')
 
+    def test_is_valid_subject(self):
+        # Valid subjects (4 bracketed parts)
+        self.assertTrue(jerasoft.is_valid_subject('[COMPANY] [TRUNK] [PREFIX] [USD]'))
+        self.assertTrue(jerasoft.is_valid_subject('[A] [B] [C] [D]'))
+        self.assertTrue(jerasoft.is_valid_subject('[TELMOBIL] [TRUNK] [44128] [USD]'))
+        self.assertTrue(jerasoft.is_valid_subject('[QUICKCOM] [STANDARD] [Prefix 002] [USD]'))
+        self.assertTrue(jerasoft.is_valid_subject('[ALLIP][CLI][1072#][USD]'))
+        self.assertTrue(jerasoft.is_valid_subject('[TELEGEEKS] [CC] [333] [USD]'))
+        # Invalid subjects (not 4 bracketed parts)
+        self.assertFalse(jerasoft.is_valid_subject('[TELMOBIL] [44128] [USD]'))  # only 3
+        self.assertFalse(jerasoft.is_valid_subject('[COMPANY] [TRUNK] [PREFIX]'))  # only 3
+        self.assertFalse(jerasoft.is_valid_subject('COMPANY TRUNK PREFIX USD'))  # no brackets
+        self.assertFalse(jerasoft.is_valid_subject(''))  # empty
+        self.assertFalse(jerasoft.is_valid_subject(None))  # None
+
+    def test_is_valid_subject_examples(self):
+        # Valid (4 bracketed parts)
+        self.assertTrue(jerasoft.is_valid_subject('[CALLCARIBE INC] [NCLI] [NONE] [USD]'))
+        self.assertTrue(jerasoft.is_valid_subject('[TELEGEEKS] [CC] [333] [USD]'))
+        self.assertTrue(jerasoft.is_valid_subject('[ALLIP][CLI][1072#][USD]'))
+        self.assertTrue(jerasoft.is_valid_subject('[Vasudev Global Pte Ltd.] [Prime] [11] [USD]'))
+        self.assertTrue(jerasoft.is_valid_subject('[CIMA TELECOM] [HAYOTEL] [75433] [USD]'))
+        # Invalid (not 4 bracketed parts)
+        self.assertFalse(jerasoft.is_valid_subject('[IPBTEL] [HAYO CC] [53956 [USD]'))  # missing closing bracket
+        self.assertFalse(jerasoft.is_valid_subject('[42com] [HAYO INT PRM USD] [] [USD]'))  # empty 3rd part
+        self.assertFalse(jerasoft.is_valid_subject('HAYO:: CLI PARTIAL RATE SHEET || PREFIX 111'))  # no brackets
+        self.assertFalse(jerasoft.is_valid_subject('[ADC][WHS][][USD]'))  # empty 3rd part
+        self.assertFalse(jerasoft.is_valid_subject('[TELMOBIL] [44128] [USD]'))  # only 3 parts
+        self.assertFalse(jerasoft.is_valid_subject('Pricelist_11/23/2025 8:13:06 AM_HAYO (Premium)_Full'))  # no brackets
+
+    def test_print_subject_validity(self):
+        subjects = [
+            '[CALLCARIBE INC] [NCLI] [NONE] [USD]',
+            '[IPBTEL] [HAYO CC] [53956 [USD]',
+            '[42com] [HAYO INT PRM USD] [] [USD]',
+            'HAYO:: CLI PARTIAL RATE SHEET || PREFIX 111',
+            '[TELEGEEKS] [CC] [333] [USD]',
+            '[ALLIP][CLI][1072#][USD]',
+            '[Vasudev Global Pte Ltd.] [Prime] [11] [USD]',
+            '[ADC][WHS][][USD]',
+            '[TELMOBIL] [44128] [USD]',
+            '[CIMA TELECOM] [HAYOTEL] [75433] [USD]',
+            'Pricelist_11/23/2025 8:13:06 AM_HAYO (Premium)_Full',
+        ]
+        for subj in subjects:
+            print(f"{subj!r} => {'VALID' if jerasoft.is_valid_subject(subj) else 'INVALID'}")
+
+    def test_is_valid_subject_expected_results(self):
+        cases = [
+            ('[CALLCARIBE INC] [NCLI] [NONE] [USD]', True),
+            ('[IPBTEL] [HAYO CC] [53956 [USD]', False),
+            ('[42com] [HAYO INT PRM USD] [] [USD]', False),
+            ('HAYO:: CLI PARTIAL RATE SHEET || PREFIX 111', False),
+            ('[TELEGEEKS] [CC] [333] [USD]', True),
+            ('[ALLIP][CLI][1072#][USD]', True),
+            ('[Vasudev Global Pte Ltd.] [Prime] [11] [USD]', True),
+            ('[ADC][WHS][][USD]', False),
+            ('[TELMOBIL] [44128] [USD]', False),
+            ('[CIMA TELECOM] [HAYOTEL] [75433] [USD]', True),
+            ('Pricelist_11/23/2025 8:13:06 AM_HAYO (Premium)_Full', False),
+        ]
+        for subj, expected in cases:
+            self.assertEqual(jerasoft.is_valid_subject(subj), expected, f"Subject: {subj!r} should be {'VALID' if expected else 'INVALID'}")
+
 if __name__ == '__main__':
     unittest.main()

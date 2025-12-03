@@ -32,10 +32,22 @@ from dotenv import load_dotenv
 from json import JSONDecodeError
 
 load_dotenv()
-
 # -------------------------------------------------------------------
-# Defaults / Env
+# Subject validation
 # -------------------------------------------------------------------
+def is_valid_subject(subject: str) -> bool:
+    """
+    Validates subject against pattern:
+    [Supplier Company Name] [Trunk Name (Std, Prm, Silver)] [Trunk Prefix] [Currency]
+    Example: Quickcom tel PRM trunk Prefix:1001 USD
+    """
+    if not subject:
+        return False
+    # Relaxed: just check for four bracketed groups, allow any content except closing bracket
+    pattern = re.compile(
+        r"^\[([^\]]+)\]\s*\[([^\]]+)\]\s*\[([^\]]+)\]\s*\[([^\]]+)\]$"
+    )
+    return bool(pattern.match(subject.strip()))
 DEFAULT_API_URL = os.getenv("JERASOFT_API_URL", "http://billing.voipsystem.org:3080")
 DEFAULT_API_KEY = os.getenv("JERA_SOFT_API_KEY")
 DEFAULT_HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -163,8 +175,13 @@ def find_best_term_table(
     prefix_code: Optional[str] = None,   # <--- NEW
 ) -> Tuple[int, Dict, List[Tuple[float, Dict]]]:
 
+
     if not target_query:
         raise ValueError("target_query must be non-empty")
+
+    # Validate subject pattern
+    if not is_valid_subject(subject):
+        return "Invalid subject: does not match required pattern.", "", ""
 
     company_kw = extract_company_keyword(target_query)
     if not company_kw:
@@ -411,8 +428,8 @@ def export_rates_by_query(
 if __name__ == "__main__":
     # Example quick-start (reads API key from env):
     info = export_rates_by_query(
-        subject="Quickcom tel com PRM trunk Prefix:001 USD",
-        target_query="Quickcom tel com PRM trunk Prefix:001 USD",
+        subject="[TELMOBIL] [44128] [USD]",
+        target_query="[TELMOBIL] [44128] [USD]",
         output_path="quickcom_rates.xlsx",
     )
     print(json.dumps(info, indent=2))
