@@ -176,7 +176,7 @@ def get_jwt_token(web_url: Optional[str] = None, login: Optional[str] = None,
         f'{web_url}/admin/_auth/jwt',
         params=params,
         verify=False,
-        timeout=30
+        timeout=120
     )
     
     if response.status_code != 200:
@@ -203,7 +203,7 @@ def upload_file_to_jerasoft(file_path: str, web_url: Optional[str] = None) -> st
             'X-File-Name': os.path.basename(file_path)
         },
         verify=False,
-        timeout=120
+        timeout=300
     )
     
     if response.status_code != 200:

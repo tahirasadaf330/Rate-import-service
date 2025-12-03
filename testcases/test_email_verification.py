@@ -4,8 +4,52 @@ import email_verification
 import json
 from pathlib import Path
 from datetime import datetime, timezone
-
 class TestEmailVerification(unittest.TestCase):
+    def test_get_token_timeout_and_errors(self):
+        from unittest.mock import patch, MagicMock
+        import requests
+        # Simulate timeout
+        with patch('requests.post') as mock_post, patch('logging.getLogger') as mock_logger:
+            mock_post.side_effect = requests.exceptions.Timeout('timeout')
+            logger = MagicMock()
+            mock_logger.return_value = logger
+            with self.assertRaises(requests.exceptions.Timeout):
+                email_verification.get_token('tenant', 'client', 'secret')
+            logger.error.assert_any_call('Token request timed out: timeout')
+
+        # Simulate request error
+        with patch('requests.post') as mock_post, patch('logging.getLogger') as mock_logger:
+            mock_post.side_effect = requests.exceptions.RequestException('fail')
+            logger = MagicMock()
+            mock_logger.return_value = logger
+            with self.assertRaises(requests.exceptions.RequestException):
+                email_verification.get_token('tenant', 'client', 'secret')
+            logger.error.assert_any_call("Token request failed: RequestException('fail')")
+
+        # Simulate non-200 response
+        with patch('requests.post') as mock_post, patch('logging.getLogger') as mock_logger:
+            resp = MagicMock()
+            resp.status_code = 400
+            resp.json.return_value = {'error': 'invalid'}
+            resp.text = 'bad request'
+            mock_post.return_value = resp
+            logger = MagicMock()
+            mock_logger.return_value = logger
+            with self.assertRaises(RuntimeError):
+                email_verification.get_token('tenant', 'client', 'secret')
+            logger.error.assert_any_call("Token error: " + json.dumps({'error': 'invalid'}, indent=2))
+
+        # Simulate missing access_token
+        with patch('requests.post') as mock_post, patch('logging.getLogger') as mock_logger:
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {'not_access_token': 'nope'}
+            mock_post.return_value = resp
+            logger = MagicMock()
+            mock_logger.return_value = logger
+            with self.assertRaises(RuntimeError):
+                email_verification.get_token('tenant', 'client', 'secret')
+            logger.error.assert_any_call("Token response missing access_token: {'not_access_token': 'nope'}")
     def test_load_failed_log_and_atomic_write(self):
         # Should load default schema if file missing
         with patch('email_verification.FAILED_EMAILS_PATH', Path('nonexistent_failed_emails.json')):
