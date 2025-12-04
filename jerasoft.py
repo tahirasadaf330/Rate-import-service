@@ -179,29 +179,39 @@ def find_best_term_table(
     if not target_query:
         raise ValueError("target_query must be non-empty")
 
+
     # Validate subject pattern
     if not is_valid_subject(subject):
         return "Invalid subject: does not match required pattern.", "", ""
 
-    company_kw = extract_company_keyword(target_query)
-    if not company_kw:
-        raise ValueError("Could not extract a company keyword from target_query.")
+    # Extract first three brackets from subject
+    m = re.match(r"^\[([^\]]+)\]\s*\[([^\]]+)\]\s*\[([^\]]+)\]", subject.strip())
+    if not m:
+        return "Invalid subject: cannot extract first three parts.", "", ""
+    company_name, trunk_name, prefix_raw = [normalize(x) for x in m.groups()]
+    # Extract numeric value from prefix
+    prefix_num_match = re.search(r"\d+", prefix_raw)
+    prefix_num = prefix_num_match.group(0) if prefix_num_match else ""
 
     tables = fetch_all_tables(api_url=api_url, api_key=api_key)
-    candidates = [
-        t for t in tables
-        if name_starts_with_term(t.get("name", "")) and name_contains_company(t.get("name", ""), company_kw)
-    ]
+    candidates = []
+    for t in tables:
+        tname = normalize(t.get("name", ""))
+        if not name_starts_with_term(t.get("name", "")):
+            continue
+        # Check if company, trunk, and numeric prefix are present in the table name
+        if (company_name in tname and trunk_name in tname and prefix_num in tname):
+            candidates.append(t)
     if not candidates:
-        return f"No TERM* tables found containing company '{company_kw}'.", "", ""
+        return f"No TERM* tables found with company='{company_name}', trunk='{trunk_name}', prefix='{prefix_num}'.", "", ""
 
     # Enforce explicit prefix if provided
     norm_pref = normalize_prefix(prefix_code)
     if norm_pref:
         exact_prefix = [t for t in candidates if table_has_prefix(t.get("name", ""), norm_pref)]
         if not exact_prefix:
-            return (f"No TERM* tables found for company '{company_kw}' with PREFIX:{norm_pref}.",
-                    "", "")
+            return (f"No TERM* tables found for company '{company_name}' with PREFIX:{norm_pref}.",
+                "", "")
         candidates = exact_prefix
 
     # Score, with small tie-break boost for explicit prefix match (in case of duplicates)

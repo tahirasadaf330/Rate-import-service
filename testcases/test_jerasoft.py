@@ -191,5 +191,91 @@ class TestJerasoft(unittest.TestCase):
         for subj, expected in cases:
             self.assertEqual(jerasoft.is_valid_subject(subj), expected, f"Subject: {subj!r} should be {'VALID' if expected else 'INVALID'}")
 
+    @patch('jerasoft.fetch_all_tables')
+    def test_find_best_term_table_matching(self, mock_fetch):
+        # Table names in Jera format
+        mock_fetch.return_value = [
+            {'id': 1, 'name': 'TERM-ALLIP-PREMIUM-PREFIX:1062# CTH2323'},
+            {'id': 2, 'name': 'TERM-TELEGEEKS-CC-PREFIX:333'},
+            {'id': 3, 'name': 'TERM-ALLIP-CLI-PREFIX:1072#'},
+            {'id': 4, 'name': 'TERM-ALLIP-PREMIUM'},
+            {'id': 5, 'name': 'TERM-OTHER-PREMIUM-PREFIX:9999'},
+        ]
+        # Valid subject, all parts present
+        result = jerasoft.find_best_term_table(
+            target_query='ALLIP PREMIUM 1062',
+            subject='[ALLIP] [PREMIUM] [PREFIX:1062#] [USD]'
+        )
+        self.assertEqual(result[1]['id'], 1)
+        # Valid subject, case insensitivity
+        result = jerasoft.find_best_term_table(
+            target_query='allip premium 1062',
+            subject='[allip] [premium] [prefix:1062#] [usd]'
+        )
+        self.assertEqual(result[1]['id'], 1)
+        # Valid subject, different table
+        result = jerasoft.find_best_term_table(
+            target_query='TELEGEEKS CC 333',
+            subject='[TELEGEEKS] [CC] [PREFIX:333] [USD]'
+        )
+        self.assertEqual(result[1]['id'], 2)
+        # Valid subject, partial match (missing prefix)
+        result = jerasoft.find_best_term_table(
+            target_query='ALLIP PREMIUM 9999',
+            subject='[ALLIP] [PREMIUM] [PREFIX:9999] [USD]'
+        )
+        self.assertEqual(result[0], "No TERM* tables found with company='allip', trunk='premium', prefix='9999'.")
+        # Valid subject, prefix present but trunk missing
+        result = jerasoft.find_best_term_table(
+            target_query='ALLIP CLI 1072',
+            subject='[ALLIP] [CLI] [PREFIX:1072#] [USD]'
+        )
+        self.assertEqual(result[1]['id'], 3)
+        # Valid subject, no match
+        result = jerasoft.find_best_term_table(
+            target_query='NOTFOUND PREMIUM 1062',
+            subject='[NOTFOUND] [PREMIUM] [PREFIX:1062#] [USD]'
+        )
+        self.assertTrue(str(result[0]).startswith("No TERM* tables found with company='notfound'"))
+        # Invalid subject (not enough brackets)
+        result = jerasoft.find_best_term_table(
+            target_query='ALLIP PREMIUM 1062',
+            subject='[ALLIP] [PREMIUM] [PREFIX:1062#]'
+        )
+        self.assertEqual(result[0], "Invalid subject: does not match required pattern.")
+
+    @patch('jerasoft.fetch_all_tables')
+    def test_find_best_term_table_prefix_numeric(self, mock_fetch):
+        mock_fetch.return_value = [
+            {'id': 1, 'name': 'TERM-ALLIP-PREMIUM-PREFIX:1062# CTH2323'},
+            {'id': 2, 'name': 'TERM-ALLIP-PREMIUM-PREFIX:9999'},
+            {'id': 3, 'name': 'TERM-ALLIP-PREMIUM-PREFIX:ABC'},
+            {'id': 4, 'name': 'TERM-ALLIP-PREMIUM-PREFIX:1062'},
+        ]
+        # Should match id=1 (prefix 1062)
+        result = jerasoft.find_best_term_table(
+            target_query='ALLIP PREMIUM 1062',
+            subject='[ALLIP] [PREMIUM] [PREFIX:1062#] [USD]'
+        )
+        self.assertEqual(result[1]['id'], 4)
+        # Should match id=4 (prefix 1062, no #)
+        result = jerasoft.find_best_term_table(
+            target_query='ALLIP PREMIUM 1062',
+            subject='[ALLIP] [PREMIUM] [PREFIX:1062] [USD]'
+        )
+        self.assertEqual(result[1]['id'], 4)
+        # Should match id=2 (prefix 9999)
+        result = jerasoft.find_best_term_table(
+            target_query='ALLIP PREMIUM 9999',
+            subject='[ALLIP] [PREMIUM] [PREFIX:9999] [USD]'
+        )
+        self.assertEqual(result[1]['id'], 2)
+        # Should not match id=3 (prefix is not numeric)
+        result = jerasoft.find_best_term_table(
+            target_query='ALLIP PREMIUM 1234',
+            subject='[ALLIP] [PREMIUM] [PREFIX:1234] [USD]'
+        )
+        self.assertTrue(str(result[0]).startswith("No TERM* tables found with company='allip'"))
+
 if __name__ == '__main__':
     unittest.main()
