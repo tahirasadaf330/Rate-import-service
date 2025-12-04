@@ -32,10 +32,22 @@ from dotenv import load_dotenv
 from json import JSONDecodeError
 
 load_dotenv()
-
 # -------------------------------------------------------------------
-# Defaults / Env
+# Subject validation
 # -------------------------------------------------------------------
+def is_valid_subject(subject: str) -> bool:
+    """
+    Validates subject against pattern:
+    [Supplier Company Name] [Trunk Name (Std, Prm, Silver)] [Trunk Prefix] [Currency]
+    Example: Quickcom tel PRM trunk Prefix:1001 USD
+    """
+    if not subject:
+        return False
+    # Relaxed: just check for four bracketed groups, allow any content except closing bracket
+    pattern = re.compile(
+        r"^\[([^\]]+)\]\s*\[([^\]]+)\]\s*\[([^\]]+)\]\s*\[([^\]]+)\]$"
+    )
+    return bool(pattern.match(subject.strip()))
 DEFAULT_API_URL = os.getenv("JERASOFT_API_URL", "http://billing.voipsystem.org:3080")
 DEFAULT_API_KEY = os.getenv("JERA_SOFT_API_KEY")
 DEFAULT_HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -163,28 +175,43 @@ def find_best_term_table(
     prefix_code: Optional[str] = None,   # <--- NEW
 ) -> Tuple[int, Dict, List[Tuple[float, Dict]]]:
 
+
     if not target_query:
         raise ValueError("target_query must be non-empty")
 
-    company_kw = extract_company_keyword(target_query)
-    if not company_kw:
-        raise ValueError("Could not extract a company keyword from target_query.")
+
+    # Validate subject pattern
+    if not is_valid_subject(subject):
+        return "Invalid subject: does not match required pattern.", "", ""
+
+    # Extract first three brackets from subject
+    m = re.match(r"^\[([^\]]+)\]\s*\[([^\]]+)\]\s*\[([^\]]+)\]", subject.strip())
+    if not m:
+        return "Invalid subject: cannot extract first three parts.", "", ""
+    company_name, trunk_name, prefix_raw = [normalize(x) for x in m.groups()]
+    # Extract numeric value from prefix
+    prefix_num_match = re.search(r"\d+", prefix_raw)
+    prefix_num = prefix_num_match.group(0) if prefix_num_match else ""
 
     tables = fetch_all_tables(api_url=api_url, api_key=api_key)
-    candidates = [
-        t for t in tables
-        if name_starts_with_term(t.get("name", "")) and name_contains_company(t.get("name", ""), company_kw)
-    ]
+    candidates = []
+    for t in tables:
+        tname = normalize(t.get("name", ""))
+        if not name_starts_with_term(t.get("name", "")):
+            continue
+        # Check if company, trunk, and numeric prefix are present in the table name
+        if (company_name in tname and trunk_name in tname and prefix_num in tname):
+            candidates.append(t)
     if not candidates:
-        return f"No TERM* tables found containing company '{company_kw}'.", "", ""
+        return f"No TERM* tables found with company='{company_name}', trunk='{trunk_name}', prefix='{prefix_num}'.", "", ""
 
     # Enforce explicit prefix if provided
     norm_pref = normalize_prefix(prefix_code)
     if norm_pref:
         exact_prefix = [t for t in candidates if table_has_prefix(t.get("name", ""), norm_pref)]
         if not exact_prefix:
-            return (f"No TERM* tables found for company '{company_kw}' with PREFIX:{norm_pref}.",
-                    "", "")
+            return (f"No TERM* tables found for company '{company_name}' with PREFIX:{norm_pref}.",
+                "", "")
         candidates = exact_prefix
 
     # Score, with small tie-break boost for explicit prefix match (in case of duplicates)
@@ -411,8 +438,8 @@ def export_rates_by_query(
 if __name__ == "__main__":
     # Example quick-start (reads API key from env):
     info = export_rates_by_query(
-        subject="Quickcom tel com PRM trunk Prefix:001 USD",
-        target_query="Quickcom tel com PRM trunk Prefix:001 USD",
+        subject="[TELMOBIL] [44128] [USD]",
+        target_query="[TELMOBIL] [44128] [USD]",
         output_path="quickcom_rates.xlsx",
     )
     print(json.dumps(info, indent=2))

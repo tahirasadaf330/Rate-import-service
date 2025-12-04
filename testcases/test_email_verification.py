@@ -5,6 +5,18 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 class TestEmailVerification(unittest.TestCase):
+    def test_bracketed_subject_empty_trunk(self):
+        subj = '[IPBTEL][ ][44090][USD]'
+        result = email_verification.validate_subject(subj)
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result['company'], 'ipbtel')
+        self.assertEqual(result['trunk'], '')
+        self.assertEqual(result['prefix'], 44090)
+        self.assertEqual(result['currency'], 'usd')
+    def test_bracketed_subject_valid(self):
+            subj = '[ALLIP][PREMIUM][1062#][USD]'
+            self.assertIsInstance(email_verification.validate_subject(subj), dict)
+            self.assertTrue(email_verification.subject_ok(subj))
     def test_get_token_timeout_and_errors(self):
         from unittest.mock import patch, MagicMock
         import requests
@@ -99,26 +111,26 @@ class TestEmailVerification(unittest.TestCase):
 
     def test_normalize_output(self):
         out = email_verification._normalize_output('Comp', 'Trunk', '123', 'USD')
-        self.assertEqual(out['company'], 'Comp')
-        self.assertEqual(out['trunk'], 'Trunk')
+        self.assertEqual(out['company'], 'comp')
+        self.assertEqual(out['trunk'], 'trunk')
         self.assertEqual(out['prefix'], 123)
-        self.assertEqual(out['currency'], 'USD')
+        self.assertEqual(out['currency'], 'usd')
         self.assertIsNone(email_verification._normalize_output('', '', '', ''))
 
     def test_extract_anyorder(self):
-        subj = 'Acme trunk prefix 123 USD'
-        result = email_verification._extract_anyorder(subj)
+        subj = '[Acme][Trunk][123][USD]'
+        result = email_verification.validate_subject(subj)
         self.assertIsInstance(result, dict)
-        self.assertEqual(result['currency'], 'USD')
-        self.assertIsNone(email_verification._extract_anyorder('no currency here'))
+        self.assertEqual(result['currency'], 'usd')
+        self.assertIsNone(email_verification.validate_subject('no currency here'))
 
     def test_validate_subject(self):
-        valid = email_verification.validate_subject('Acme trunk prefix 123 USD')
+        valid = email_verification.validate_subject('[Acme][Trunk][123][USD]')
         self.assertIsInstance(valid, dict)
         self.assertIsNone(email_verification.validate_subject('bad subject'))
 
     def test_subject_ok(self):
-        self.assertTrue(email_verification.subject_ok('Acme trunk prefix 123 USD'))
+        self.assertTrue(email_verification.subject_ok('[Acme][Trunk][123][USD]'))
         self.assertFalse(email_verification.subject_ok('bad subject'))
 
     def test_dbg(self):
