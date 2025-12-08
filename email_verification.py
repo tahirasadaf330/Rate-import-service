@@ -166,10 +166,10 @@ _FREEFORM = re.compile(r"""
 
 _BRACKETED_LIKE = re.compile(r"""
     ^\s*
-    \[(?P<company>[A-Za-z0-9_\-\s]+?)\]\s*
-    \[(?P<trunk>[^\]]*)\]\s*
-    \[(?P<prefix>none|\d+)\]\s*
-    \[(?P<currency>[A-Za-z]{3})\]\s*$
+    (?P<company>[A-Za-z0-9_\-\s]+?)\s+
+    (?P<trunk>\S+)\s+
+    (?P<prefix>none|\d+)\s+
+    (?P<currency>[A-Za-z]{3})\s*$
 """, re.IGNORECASE | re.VERBOSE)
 
 _NO_LABELS = re.compile(r"""
@@ -189,12 +189,10 @@ def _first_3letter_currency(tokens):
     return None
 
 def _normalize_output(company: str, trunk: str, prefix, currency: str) -> Optional[Dict[str, object]]:
-    company = (company or "").strip(" ._-" ).lower()
-    trunk = (trunk or "").strip().lower()
-    if trunk == '':
-        trunk = ''  # Explicitly allow empty trunk
-    currency = (currency or "").strip().lower()
-    if not company or not re.fullmatch(r"[a-z]{3}", currency):
+    company = (company or "").strip(" ._-")
+    trunk = (trunk or "").strip()
+    currency = (currency or "").strip().upper()
+    if not company or not trunk or not re.fullmatch(r"[A-Z]{3}", currency):
         return None
     if isinstance(prefix, str):
         if prefix.lower() == "none":
@@ -205,8 +203,7 @@ def _normalize_output(company: str, trunk: str, prefix, currency: str) -> Option
             return None
     elif prefix is not None and not isinstance(prefix, int):
         return None
-    # Allow trunk to be empty string
-    if trunk != '' and not re.fullmatch(r"[A-Za-z][\w\-]*", trunk):
+    if not re.fullmatch(r"[A-Za-z][\w\-]*", trunk):
         return None
     return {"company": company, "trunk": trunk, "prefix": prefix, "currency": currency}
 
@@ -266,16 +263,10 @@ def _extract_anyorder(subject: str) -> Optional[Dict[str, object]]:
 def validate_subject(subject: Optional[str]) -> Optional[Dict[str, object]]:
     if not subject:
         return None
-    # If subject contains brackets, use bracketed regex first
-    if '[' in subject and ']' in subject:
-        m = _BRACKETED_LIKE.match(subject.strip())
-        if m:
-            gd = m.groupdict()
-            return _normalize_output(gd.get("company",""), gd.get("trunk",""), gd.get("prefix",""), gd.get("currency",""))
     s = _normalize_subject(subject)
     if not s:
         return None
-    for rx in (_FREEFORM, _NO_LABELS):
+    for rx in (_FREEFORM, _BRACKETED_LIKE, _NO_LABELS):
         m = rx.match(s)
         if m:
             gd = m.groupdict()
