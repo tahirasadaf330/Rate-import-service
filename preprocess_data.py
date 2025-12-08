@@ -307,12 +307,11 @@ from datetime import date, datetime
 
 def _raw_from_ws(ws) -> pd.DataFrame:
     rows_as_text = []
-    max_rows = 2000  # Limit to 2000 rows for performance
-    empty_row_limit = 100  # Stop if 100 consecutive empty rows
+     # Read the entire worksheet without an artificial row cap.
+    # Keep a reasonable empty-row streak break to avoid trailing empties in very large sheets.
+    empty_row_limit = 500  # Stop if 500 consecutive empty rows (acts near end-of-data)
     empty_count = 0
-    for i, row in enumerate(ws.iter_rows(values_only=False)):
-        if i >= max_rows:
-            break
+    for row in ws.iter_rows(values_only=False):
         out = []
         for c in row:
             v = c.value
@@ -1342,8 +1341,8 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\Hayo_Telecom-USD-A-Z-Retail-2025-11-27.xlsx"
-    OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\CPL_011_HAYO_011-20251029-149146333333333333333333.xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\2025-11-25_HAYO_TEL_Premium_1_.xlsx"
+    OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
     cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='YYYY-MMM-DD')
