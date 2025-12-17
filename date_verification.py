@@ -49,16 +49,20 @@ def _df_preview_records(df: pd.DataFrame, limit: int = MAX_PREVIEW_ROWS) -> list
 def _read_excel_native(path: str, sheet=0) -> pd.DataFrame:
     """
     Read an Excel sheet WITHOUT dtype=str so real Excel date cells
-    stay as datetime/date/Timestamp. Tries calamine first, then openpyxl.
+    stay as datetime/date/Timestamp. Prefer openpyxl first on Windows to avoid
+    rare calamine panics, then fall back to calamine.
     """
     last_err = None
-    for eng in ("calamine", "openpyxl"):
+    for eng in ("openpyxl", "calamine"):
         try:
             return pd.read_excel(path, sheet_name=sheet, header=None, engine=eng)
         except Exception as e:
             last_err = e
             continue
-    raise last_err or RuntimeError("Failed reading excel with calamine/openpyxl")
+        except BaseException as e:  # catch non-Exception panics from native libs
+            last_err = e
+            continue
+    raise last_err or RuntimeError("Failed reading excel with openpyxl/calamine")
 
 def _parse_iso_utc_dt(s: Optional[str]) -> Optional[datetime]:
     if not s or not isinstance(s, str):
