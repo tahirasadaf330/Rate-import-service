@@ -804,7 +804,11 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
             column_to_canonical[c] = canonical_name
             canonical_to_columns.setdefault(canonical_name, []).append(c)
     
-    # Second pass: resolve conflicts by picking the best match for each canonical name
+    # Second pass: resolve conflicts.
+    #
+    # IMPORTANT: For some canonicals (especially 'Dst Code'), multiple matches are ambiguous
+    # (e.g., a sheet containing both "Code" and "Prefix"). In these cases we prefer to fail
+    # fast with a clear error instead of silently choosing one.
     final_alias_hit = {}
     
     for canonical_name, column_candidates in canonical_to_columns.items():
@@ -812,7 +816,28 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
             # No conflict, use the single match
             final_alias_hit[column_candidates[0]] = canonical_name
         else:
-            # Multiple columns map to same canonical name - pick the best one
+            # Multiple columns map to same canonical name.
+            #
+            # For REQUIRED_COLS (Dst Code, Rate, Effective Date, Billing Increment) and optional Dst Code Name,
+            # this is ambiguous and we must fail fast with a clear message.
+            strict_canonicals = set(REQUIRED_COLS) | {"Dst Code Name"}
+            if canonical_name in strict_canonicals:
+                cand_keys = {c: key_map.get(c) for c in column_candidates}
+                example_hint = {
+                    "Dst Code": "keep only ONE destination code column (e.g., keep 'Dst Code' OR 'Prefix' OR 'Code')",
+                    "Rate": "keep only ONE rate column (e.g., keep 'Rate' OR 'Price')",
+                    "Effective Date": "keep only ONE effective-date column",
+                    "Billing Increment": "keep only ONE billing-increment column",
+                    "Dst Code Name": "keep only ONE destination name column",
+                }.get(canonical_name, "keep only ONE column for this field")
+                raise ValueError(
+                    f"Ambiguous columns for '{canonical_name}': {column_candidates}. "
+                    f"These all map to '{canonical_name}' after normalization/aliasing. "
+                    f"Normalized keys: {cand_keys}. "
+                    f"Please {example_hint} and remove/rename the others."
+                )
+
+            # Otherwise, pick the best one
             best_column = _find_best_column_match(column_candidates, canonical_name)
             final_alias_hit[best_column] = canonical_name
             
