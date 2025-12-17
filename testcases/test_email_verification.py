@@ -121,6 +121,23 @@ class TestEmailVerification(unittest.TestCase):
         self.assertTrue(email_verification.subject_ok('Acme trunk prefix 123 USD'))
         self.assertFalse(email_verification.subject_ok('bad subject'))
 
+    def test_strip_date_time_tokens_for_invalid_subject(self):
+        s = "ECOCARRIER LATEST OFFER RATES TO HAYO TELECOM, INC - FULL REPLACEMENT with prefix 8300 effective immediately December 12, 2025 14:04 GMT"
+        out = email_verification._strip_date_time_tokens_for_invalid_subject(s)
+        # Date/time removed; core text preserved
+        # (commas are removed by canonicalization)
+        self.assertIn("ECOCARRIER LATEST OFFER RATES TO HAYO TELECOM INC - FULL REPLACEMENT with prefix 8300 effective immediately", out)
+        self.assertNotIn("December", out)
+        self.assertNotIn("2025", out)
+        self.assertNotIn("14:04", out)
+        self.assertNotIn("14 04", out)
+        self.assertNotIn("GMT", out.upper())
+
+    def test_strip_date_time_tokens_for_invalid_subject_iso(self):
+        s = "Offer update prefix 8300 2025-12-01T15:41:59Z"
+        out = email_verification._strip_date_time_tokens_for_invalid_subject(s)
+        self.assertEqual(out, "Offer update prefix 8300")
+
     def test_dbg(self):
         with patch('email_verification.DEBUG', True):
             with patch('builtins.print') as mock_print:

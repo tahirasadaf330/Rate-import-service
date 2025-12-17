@@ -420,6 +420,68 @@ class TestColumnMapping(unittest.TestCase):
         precleaned = _preclean_header_token('price $')
         self.assertNotIn('$', precleaned)
 
+    def test_canonicalize_headers_ambiguous_dst_code_raises(self):
+        """If multiple columns map to Dst Code (e.g. Code + Prefix), preprocessing must fail fast."""
+        df = pd.DataFrame({
+            'code': ['1001'],            # -> Dst Code
+            'prefix': ['2002'],          # -> Dst Code (ambiguous)
+            'rate': [0.050],
+            'effective_date': ['2024-01-01'],
+            'billing_increment': ['1/60'],
+        })
+        with self.assertRaises(ValueError) as ctx:
+            _canonicalize_headers(df)
+        self.assertIn("Ambiguous columns for 'Dst Code'", str(ctx.exception))
+
+    def test_canonicalize_headers_ambiguous_rate_raises(self):
+        """If multiple columns map to Rate (e.g. Rate + Price), preprocessing must fail fast."""
+        df = pd.DataFrame({
+            'dst_code': ['1001'],
+            'rate': [0.050],            # -> Rate
+            'price': [0.051],           # -> Rate (ambiguous)
+            'effective_date': ['2024-01-01'],
+            'billing_increment': ['1/60'],
+        })
+        with self.assertRaises(ValueError) as ctx:
+            _canonicalize_headers(df)
+        self.assertIn("Ambiguous columns for 'Rate'", str(ctx.exception))
+
+    def test_canonicalize_headers_ambiguous_effective_date_raises(self):
+        """If multiple columns map to Effective Date (e.g. Date + Effective Date), fail fast."""
+        df = pd.DataFrame({
+            'dst_code': ['1001'],
+            'rate': [0.050],
+            'date': ['2024-01-01'],              # -> Effective Date
+            'effective_date': ['2024-01-01'],    # -> Effective Date (ambiguous)
+            'billing_increment': ['1/60'],
+        })
+        with self.assertRaises(ValueError) as ctx:
+            _canonicalize_headers(df)
+        self.assertIn("Ambiguous columns for 'Effective Date'", str(ctx.exception))
+
+    def test_canonicalize_headers_ambiguous_billing_increment_raises(self):
+        """If multiple columns map to Billing Increment (e.g. Billing Increment + Increment), fail fast."""
+        df = pd.DataFrame({
+            'dst_code': ['1001'],
+            'rate': [0.050],
+            'effective_date': ['2024-01-01'],
+            'billing_increment': ['1/60'],   # -> Billing Increment
+            'increment': ['1/1'],            # -> Billing Increment (ambiguous)
+        })
+        with self.assertRaises(ValueError) as ctx:
+            _canonicalize_headers(df)
+        self.assertIn("Ambiguous columns for 'Billing Increment'", str(ctx.exception))
+
+    def test_canonicalize_headers_ambiguous_dst_code_name_raises(self):
+        """If there are duplicate Dst Code Name columns, fail fast."""
+        df = pd.DataFrame(
+            [["1001", "Dest A", "Dest B", 0.05, "2024-01-01", "1/60"]],
+            columns=["Dst Code", "Dst Code Name", "Dst Code Name", "Rate", "Effective Date", "Billing Increment"],
+        )
+        with self.assertRaises(ValueError) as ctx:
+            _canonicalize_headers(df)
+        self.assertIn("Ambiguous columns for 'Dst Code Name'", str(ctx.exception))
+
 
 class TestDataTypeConversion(unittest.TestCase):
     """Test data type conversion functionality."""
@@ -685,8 +747,11 @@ class TestRealFileProcessing(unittest.TestCase):
     
     def test_csv_file_processing(self):
         """
-        Test processing a CSV file - CHANGE THE FILE PATH TO YOUR CSV TEST FILE.
+        Test processing a CSV/Excel file from disk (developer-local).
+        This is an integration-style test; skipped by default in CI.
         """
+        if os.getenv("RUN_INTEGRATION_TESTS") != "1":
+            self.skipTest("Set RUN_INTEGRATION_TESTS=1 to run developer-local file processing tests")
         # MODIFY THIS PATH TO YOUR CSV TEST FILE:
         test_csv_path = r"C:\Users\Tahira Sadaf\Documents\attachments\HayoTel_A_To_Z___99992_RN.xlsx"
         
