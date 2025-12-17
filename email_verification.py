@@ -146,6 +146,84 @@ FAILED_SUBJECTS_PATH = Path(__file__).with_name("failed_subjects.json")
 
 # ------------------------- Subject Normalization & Parsing -------------------------
 
+def _strip_date_time_tokens_for_invalid_subject(subj: str) -> str:
+    """
+    Canonicalize subject for invalid-subject approval:
+    remove date/time tokens so date-format-only differences map to the same key.
+    """
+    if not subj:
+        return ""
+
+    # Normalize separators similar to _normalize_subject, but KEEP ':' so time like "14:04"
+    # can be stripped before we collapse punctuation.
+    subj = unicodedata.normalize("NFKC", str(subj))
+    subj = re.sub(r"[;|,/\\]+", " ", subj)
+    subj = re.sub(r"\s+", " ", subj).strip()
+
+    # Remove time tokens
+    subj = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", "", subj)  # HH:MM or HH:MM:SS
+    subj = re.sub(r"\b\d{6}\b", "", subj)  # HHMMSS
+    subj = re.sub(r"\b(?:am|pm)\b", "", subj, flags=re.IGNORECASE)
+
+    # Remove ISO-8601 datetimes (covers most cases)
+    subj = re.sub(
+        r"\b(?:19|20)\d{2}[-/\.](?:0?[1-9]|1[0-2])[-/\.](?:0?[1-9]|[12]\d|3[01])"
+        r"(?:[T\s]"
+        r"(?:[01]\d|2[0-3])[:\.]?[0-5]\d"
+        r"(?::?[0-5]\d)?"
+        r"(?:\.\d+)?"
+        r"(?:\s*(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d))?"
+        r")\b",
+        "",
+        subj,
+        flags=re.IGNORECASE,
+    )
+
+    # Drop common timezone offset tokens if they appear alone
+    # (use whitespace-boundaries, not \b, because '+'/'-' are non-word chars)
+    subj = re.sub(r"(?<!\S)[+-](?:[01]\d|2[0-3]):?[0-5]\d(?!\S)", "", subj)
+
+    # Drop day-of-week tokens (common in RFC-like dates)
+    subj = re.sub(
+        r"\b(?:mon|tue(?:s)?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)(?:day)?\b",
+        "",
+        subj,
+        flags=re.IGNORECASE,
+    )
+
+    # Drop common timezone tokens that often follow times
+    subj = re.sub(r"\b(?:UTC|GMT|EST|EDT|CST|CDT|MST|MDT|PST|PDT)\b", "", subj, flags=re.IGNORECASE)
+
+    # Remove ISO-like / common date formats:
+    # - YYYY-MM-DD, YYYY/M/D, YYYY.MM.DD
+    subj = re.sub(r"\b(?:19|20)\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])\b", "", subj)
+    # - DD-MM-YYYY, D/M/YYYY, DD.MM.YYYY
+    subj = re.sub(r"\b(?:0?[1-9]|[12]\d|3[01])[-/.](?:0?[1-9]|1[0-2])[-/.](?:19|20)\d{2}\b", "", subj)
+    # - compact yyyymmdd (very common in filenames)
+    subj = re.sub(r"\b(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\b", "", subj)
+    # - spaced variants after normalization: YYYY M D or D M YYYY
+    subj = re.sub(r"\b(?:19|20)\d{2}\s+(?:0?[1-9]|1[0-2])\s+(?:0?[1-9]|[12]\d|3[01])\b", "", subj)
+    subj = re.sub(r"\b(?:0?[1-9]|[12]\d|3[01])\s+(?:0?[1-9]|1[0-2])\s+(?:19|20)\d{2}\b", "", subj)
+    # - month-name dates like "December 1 2025" / "Dec 1 2025" (commas already normalized away)
+    month = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+    subj = re.sub(rf"\b{month}\s+(?:0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?\s+(?:19|20)\d{{2}}\b", "", subj, flags=re.IGNORECASE)
+    subj = re.sub(rf"\b(?:0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?\s+{month}\s+(?:19|20)\d{{2}}\b", "", subj, flags=re.IGNORECASE)
+    # - hyphenated month-name forms: 01-Dec-2025, Dec-01-25, 01-Dec-25
+    subj = re.sub(rf"\b(?:0?[1-9]|[12]\d|3[01])[-\s]{month}[-\s](?:\d{{2}}|\d{{4}})\b", "", subj, flags=re.IGNORECASE)
+    subj = re.sub(rf"\b{month}[-\s](?:0?[1-9]|[12]\d|3[01])[-\s](?:\d{{2}}|\d{{4}})\b", "", subj, flags=re.IGNORECASE)
+    # - month + year (e.g. "Dec 2025") and year + month (e.g. "2025 Dec")
+    subj = re.sub(rf"\b{month}\s+(?:19|20)\d{{2}}\b", "", subj, flags=re.IGNORECASE)
+    subj = re.sub(rf"\b(?:19|20)\d{{2}}\s+{month}\b", "", subj, flags=re.IGNORECASE)
+
+    # If a month-name date was partially stripped (e.g. "01-Dec" left behind), remove the remainder too
+    subj = re.sub(rf"\b(?:0?[1-9]|[12]\d|3[01])[-\s]{month}\b", "", subj, flags=re.IGNORECASE)
+    subj = re.sub(rf"\b{month}[-\s](?:0?[1-9]|[12]\d|3[01])\b", "", subj, flags=re.IGNORECASE)
+
+    # Remove any leftover standalone '+'/'-' tokens after stripping offsets
+    subj = re.sub(r"(?<!\S)[+-](?!\S)", "", subj)
+
+    return re.sub(r"\s+", " ", subj).strip()
+
 def _normalize_subject(s: Optional[str]) -> Optional[str]:
     if not s:
         return None
@@ -765,13 +843,8 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
                     )
 
                     def strip_date_from_subject(subj: str) -> str:
-                        # Remove date patterns like DD/MM/YYYY or YYYY-MM-DD
-                        # Also remove time if present
-                        subj = re.sub(r"\b\d{2}/\d{2}/\d{4}\b", "", subj)
-                        subj = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", "", subj)
-                        subj = re.sub(r"\b\d{2}:\d{2}:\d{2}\b", "", subj)
-                        return re.sub(r"\s+", " ", subj).strip()
-
+                        return _strip_date_time_tokens_for_invalid_subject(subj)
+                    
                     subject_nodate = strip_date_from_subject(subject)
                     found = find_invalid_subject_detail(parent_id, subject_nodate)
                     if found:
