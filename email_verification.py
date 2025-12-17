@@ -180,7 +180,8 @@ def _strip_date_time_tokens_for_invalid_subject(subj: str) -> str:
     )
 
     # Drop common timezone offset tokens if they appear alone
-    subj = re.sub(r"\b[+-](?:[01]\d|2[0-3]):?[0-5]\d\b", "", subj)
+    # (use whitespace-boundaries, not \b, because '+'/'-' are non-word chars)
+    subj = re.sub(r"(?<!\S)[+-](?:[01]\d|2[0-3]):?[0-5]\d(?!\S)", "", subj)
 
     # Drop day-of-week tokens (common in RFC-like dates)
     subj = re.sub(
@@ -213,6 +214,13 @@ def _strip_date_time_tokens_for_invalid_subject(subj: str) -> str:
     # - month + year (e.g. "Dec 2025") and year + month (e.g. "2025 Dec")
     subj = re.sub(rf"\b{month}\s+(?:19|20)\d{{2}}\b", "", subj, flags=re.IGNORECASE)
     subj = re.sub(rf"\b(?:19|20)\d{{2}}\s+{month}\b", "", subj, flags=re.IGNORECASE)
+
+    # If a month-name date was partially stripped (e.g. "01-Dec" left behind), remove the remainder too
+    subj = re.sub(rf"\b(?:0?[1-9]|[12]\d|3[01])[-\s]{month}\b", "", subj, flags=re.IGNORECASE)
+    subj = re.sub(rf"\b{month}[-\s](?:0?[1-9]|[12]\d|3[01])\b", "", subj, flags=re.IGNORECASE)
+
+    # Remove any leftover standalone '+'/'-' tokens after stripping offsets
+    subj = re.sub(r"(?<!\S)[+-](?!\S)", "", subj)
 
     return re.sub(r"\s+", " ", subj).strip()
 

@@ -122,16 +122,87 @@ class TestEmailVerification(unittest.TestCase):
         self.assertFalse(email_verification.subject_ok('bad subject'))
 
     def test_strip_date_time_tokens_for_invalid_subject(self):
-        s = "ECOCARRIER LATEST OFFER RATES TO HAYO TELECOM, INC - FULL REPLACEMENT with prefix 8300 effective immediately December 12, 2025 14:04 GMT"
-        out = email_verification._strip_date_time_tokens_for_invalid_subject(s)
-        # Date/time removed; core text preserved
-        # (commas are removed by canonicalization)
-        self.assertIn("ECOCARRIER LATEST OFFER RATES TO HAYO TELECOM INC - FULL REPLACEMENT with prefix 8300 effective immediately", out)
-        self.assertNotIn("December", out)
-        self.assertNotIn("2025", out)
-        self.assertNotIn("14:04", out)
-        self.assertNotIn("14 04", out)
-        self.assertNotIn("GMT", out.upper())
+        cases = [
+            {
+                "name": "month_name_date_with_time_and_tz",
+                "inp": "ECOCARRIER LATEST OFFER RATES TO HAYO TELECOM, INC - FULL REPLACEMENT with prefix 8300 effective immediately December 12, 2025 14:04 GMT",
+                "contains": [
+                    # punctuation like ',' and '-' are removed by subject cleanup, so assert on a punctuation-free core
+                    "ECOCARRIER LATEST OFFER RATES TO HAYO TELECOM INC FULL REPLACEMENT with prefix 8300 effective immediately",
+                ],
+                "not_contains": ["December", "2025", "14:04", "14 04", "GMT"],
+            },
+            {
+                "name": "iso_datetime_z",
+                "inp": "Offer update prefix 8300 2025-12-01T15:41:59Z",
+                "equals": "Offer update prefix 8300",
+            },
+            {
+                "name": "iso_datetime_offset",
+                "inp": "Offer update prefix 8300 2025-12-01 15:41:59+05:00",
+                "equals": "Offer update prefix 8300",
+            },
+            {
+                "name": "numeric_date_ymd_with_dots",
+                "inp": "Acme prefix 123 effective 2025.12.01",
+                "equals": "Acme prefix 123 effective",
+            },
+            {
+                "name": "numeric_date_dmy_with_slashes",
+                "inp": "Acme prefix 123 effective 01/12/2025",
+                "equals": "Acme prefix 123 effective",
+            },
+            {
+                "name": "numeric_date_ymd_with_slashes",
+                "inp": "Acme prefix 123 effective 2025/12/01",
+                "equals": "Acme prefix 123 effective",
+            },
+            {
+                "name": "compact_yyyymmdd",
+                "inp": "Acme prefix 123 effective 20251201",
+                "equals": "Acme prefix 123 effective",
+            },
+            {
+                "name": "day_name_and_month_name_date",
+                "inp": "Acme prefix 123 effective Mon December 1 2025 09:00 UTC",
+                "equals": "Acme prefix 123 effective",
+            },
+            {
+                "name": "hyphenated_month_name_date",
+                "inp": "Acme prefix 123 effective 01-Dec-2025 09:00",
+                "equals": "Acme prefix 123 effective",
+            },
+            {
+                "name": "month_year_only",
+                "inp": "Acme prefix 123 effective Dec 2025",
+                "equals": "Acme prefix 123 effective",
+            },
+            {
+                "name": "am_pm_time",
+                "inp": "Acme prefix 123 effective December 1, 2025 9:15 PM GMT",
+                "equals": "Acme prefix 123 effective",
+            },
+            {
+                "name": "hhmmss_compact_time",
+                "inp": "Acme prefix 123 effective 2025-12-01 154159 GMT",
+                "equals": "Acme prefix 123 effective",
+            },
+            {
+                "name": "offset_token_alone",
+                "inp": "Acme prefix 123 effective 2025-12-01 +05:00",
+                "equals": "Acme prefix 123 effective",
+            },
+        ]
+
+        for c in cases:
+            with self.subTest(case=c["name"]):
+                out = email_verification._strip_date_time_tokens_for_invalid_subject(c["inp"])
+                if "equals" in c:
+                    self.assertEqual(out, c["equals"])
+                for needle in c.get("contains", []):
+                    self.assertIn(needle, out)
+                for bad in c.get("not_contains", []):
+                    self.assertNotIn(bad, out)
 
     def test_strip_date_time_tokens_for_invalid_subject_iso(self):
         s = "Offer update prefix 8300 2025-12-01T15:41:59Z"

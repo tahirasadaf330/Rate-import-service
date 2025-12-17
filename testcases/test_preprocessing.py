@@ -577,6 +577,20 @@ class TestBillingIncrementSynthesis(unittest.TestCase):
         # Should have created 'Billing Increment' column
         self.assertIn('Billing Increment', result_df.columns)
 
+    def test_synthesize_billing_increment_ambiguous_sources_raises(self):
+        """If Billing Increment exists AND a known pair (Interval 1/Interval N) also exists, reject as ambiguous."""
+        df = pd.DataFrame({
+            'Dst Code': ['1001'],
+            'Rate': [0.050],
+            'Effective Date': ['2024-01-01'],
+            'Billing Increment': ['1/60'],  # already present
+            'Interval 1': ['1'],
+            'Interval N': ['60'],
+        })
+        with self.assertRaises(ValueError) as ctx:
+            _synthesize_billing_increment(df)
+        self.assertIn("Ambiguous Billing Increment sources", str(ctx.exception))
+
 
 class TestHeaderDetection(unittest.TestCase):
     """Test header detection functionality."""

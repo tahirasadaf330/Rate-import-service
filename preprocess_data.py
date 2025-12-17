@@ -187,8 +187,25 @@ def _synthesize_billing_increment(df: pd.DataFrame) -> pd.DataFrame:
 
     df = _coalesce_billing_increment_dupes(df)
 
-    # If already present and non-empty anywhere, keep it
+    # If Billing Increment is already present and non-empty anywhere, we normally keep it.
+    # But if we ALSO have known "pair" columns (e.g., Interval 1 / Interval N), that is ambiguous:
+    # reject the file with a clear error instead of silently ignoring the extra columns.
     if 'Billing Increment' in df.columns and df['Billing Increment'].astype(str).str.strip().ne('').any():
+        norm2real = {_norm(c): c for c in df.columns}
+        pair_present = [(a, b) for (a, b) in BILLING_PAIRS if a in norm2real and b in norm2real]
+        if pair_present:
+            # show the real column names found
+            cols = []
+            for a, b in pair_present:
+                cols.append(norm2real[a])
+                cols.append(norm2real[b])
+            cols = sorted(set(cols))
+            raise ValueError(
+                "Ambiguous Billing Increment sources: found 'Billing Increment' column with values, "
+                f"and also found billing-increment pair columns {cols}. "
+                "Please keep only one source (either provide a single Billing Increment column, "
+                "OR provide the pair columns like Interval 1/Interval N and remove Billing Increment)."
+            )
         return df
     
     print("\n\n\nSynthesizing 'Billing Increment' from other columns...\n\n\n")
@@ -696,52 +713,6 @@ def _normalize_header_key(s: str) -> str:
 # but this makes it robust to future edits.
 ALIAS_MAP_NORM = { _normalize_header_key(k): v for k, v in ALIAS_MAP.items() }
 
-def _find_best_column_match(columns_for_canonical: list, canonical_name: str) -> str:
-    """
-    When multiple columns map to the same canonical name, pick the best one.
-    Preference order:
-    1. Most specific ALIAS_MAP key match (longer keys are more specific)
-    2. Exact normalized name match to canonical
-    3. Shorter column name (more precise)
-    4. First occurrence
-    """
-    if len(columns_for_canonical) == 1:
-        return columns_for_canonical[0]
-    
-    # Build scoring for each column
-    scored_columns = []
-    
-    for col in columns_for_canonical:
-        # Calculate normalized key for this column
-        preclean = _preclean_header_token(col)
-        norm = _norm(preclean)
-        key = _strip_currency_words_from_key(norm)
-        
-        score = 0
-        
-        # Priority 1: Check if this is an exact match to a key in ALIAS_MAP
-        # Give higher scores to longer (more specific) keys
-        if key in ALIAS_MAP and ALIAS_MAP[key] == canonical_name:
-            base_score = 1000
-            # Add bonus for longer keys (more specific aliases)
-            specificity_bonus = len(key) * 10  # Longer keys get more points
-            score += base_score + specificity_bonus
-        
-        # Priority 2: Check if column name (when normalized) exactly equals the canonical
-        if key.replace('_', ' ').lower() == canonical_name.lower().replace(' ', '_'):
-            score += 500
-        
-        # Priority 3: Prefer shorter column names (often more precise) - but lower priority now
-        length_score = max(0, 100 - min(len(col), 100))  # Shorter names get higher scores
-        score += length_score
-        
-        scored_columns.append((score, col))
-    
-    # Sort by score (highest first), then by column name for stability
-    scored_columns.sort(key=lambda x: (-x[0], x[1]))
-    
-    return scored_columns[0][1]
-
 def _match_alias_substring(normalized_key: str, alias_map: dict = ALIAS_MAP_NORM):
     """
     Try to map a normalized header by substring match against alias keys.
@@ -816,35 +787,14 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
             # No conflict, use the single match
             final_alias_hit[column_candidates[0]] = canonical_name
         else:
-            # Multiple columns map to same canonical name.
-            #
-            # For REQUIRED_COLS (Dst Code, Rate, Effective Date, Billing Increment) and optional Dst Code Name,
-            # this is ambiguous and we must fail fast with a clear message.
-            strict_canonicals = set(REQUIRED_COLS) | {"Dst Code Name"}
-            if canonical_name in strict_canonicals:
-                cand_keys = {c: key_map.get(c) for c in column_candidates}
-                example_hint = {
-                    "Dst Code": "keep only ONE destination code column (e.g., keep 'Dst Code' OR 'Prefix' OR 'Code')",
-                    "Rate": "keep only ONE rate column (e.g., keep 'Rate' OR 'Price')",
-                    "Effective Date": "keep only ONE effective-date column",
-                    "Billing Increment": "keep only ONE billing-increment column",
-                    "Dst Code Name": "keep only ONE destination name column",
-                }.get(canonical_name, "keep only ONE column for this field")
-                raise ValueError(
-                    f"Ambiguous columns for '{canonical_name}': {column_candidates}. "
-                    f"These all map to '{canonical_name}' after normalization/aliasing. "
-                    f"Normalized keys: {cand_keys}. "
-                    f"Please {example_hint} and remove/rename the others."
-                )
-
-            # Otherwise, pick the best one
-            best_column = _find_best_column_match(column_candidates, canonical_name)
-            final_alias_hit[best_column] = canonical_name
-            
-            # Mark other candidates as unmatched (they'll keep their cleaned names)
-            for col in column_candidates:
-                if col != best_column:
-                    final_alias_hit[col] = None
+            # Multiple columns map to same canonical name -> always ambiguous; fail fast.
+            cand_keys = {c: key_map.get(c) for c in column_candidates}
+            raise ValueError(
+                f"Ambiguous columns for '{canonical_name}': {column_candidates}. "
+                f"These all map to '{canonical_name}' after normalization/aliasing. "
+                f"Normalized keys: {cand_keys}. "
+                f"Please keep only ONE column for '{canonical_name}' and remove/rename the others."
+            )
     
     # Ensure all columns have an entry
     for c in original:
@@ -1366,7 +1316,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\2025-11-25_HAYO_TEL_Premium_1_.xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Downloads\HayoTel A To Z _ 99992 RN (4).xlsx"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
