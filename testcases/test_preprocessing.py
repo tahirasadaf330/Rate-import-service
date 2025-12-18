@@ -398,9 +398,9 @@ class TestColumnMapping(unittest.TestCase):
         
         for alias in expected_aliases:
             with self.subTest(alias=alias):
-                # Should either be in ALIAS_MAP or get mapped by substring matching
-                if alias in ALIAS_MAP:
-                    self.assertIn(ALIAS_MAP[alias], REQUIRED_COLS)
+                # Exact mapping only: required aliases must exist explicitly
+                self.assertIn(alias, ALIAS_MAP)
+                self.assertIn(ALIAS_MAP[alias], REQUIRED_COLS)
     
     def test_header_with_currency_symbols(self):
         """Test header cleaning with currency symbols."""
