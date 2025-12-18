@@ -535,7 +535,9 @@ def detect_header_row(raw: pd.DataFrame) -> int:
         cells = [x for x in row if pd.notna(x)]
         precleaned = [_preclean_header_token(x) for x in cells]
         normed = [_norm(x) for x in precleaned]
-        mapped = [ALIAS_MAP.get(n) or _match_alias_substring(n) for n in normed]
+        # Exact mapping only (substring disabled)
+        normed_keys = [_strip_currency_words_from_key(n) for n in normed]
+        mapped = [ALIAS_MAP.get(n) for n in normed_keys]
 
         covered = {m for m in mapped if m}
 
@@ -715,21 +717,21 @@ ALIAS_MAP_NORM = { _normalize_header_key(k): v for k, v in ALIAS_MAP.items() }
 
 def _match_alias_substring(normalized_key: str, alias_map: dict = ALIAS_MAP_NORM):
     """
-    Try to map a normalized header by substring match against alias keys.
-    Returns canonical header string or None.
-    Preference order:
-      1) exact match (but this should be handled in _canonicalize_headers now)
-      2) longest alias that is a substring of the key
-    """
-    # exact hit first (though this should be handled upstream now)
-    if normalized_key in alias_map:
-        return alias_map[normalized_key]
+    Substring matching is intentionally disabled.
 
-    # substring hits, longest alias wins to avoid 'date' beating 'effective_date'
-    for alias in sorted(alias_map.keys(), key=len, reverse=True):
-        if alias and alias in normalized_key:
-            return alias_map[alias]
+    We keep the function (with the old implementation commented out) so it’s easy to
+    restore later, but the current pipeline uses **exact ALIAS_MAP matches only**.
+    """
     return None
+
+    # --- Old substring implementation (commented out) ---
+    # if normalized_key in alias_map:
+    #     return alias_map[normalized_key]
+    #
+    # for alias in sorted(alias_map.keys(), key=len, reverse=True):
+    #     if alias and alias in normalized_key:
+    #         return alias_map[alias]
+    # return None
 
 
 #################################################
@@ -764,12 +766,11 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
         key = key_map[c]
         canonical_name = None
         
-        # Try exact match first
+        # Exact match only (substring disabled)
         if key in ALIAS_MAP:
             canonical_name = ALIAS_MAP[key]
         else:
-            # Try substring match
-            canonical_name = _match_alias_substring(key)
+            canonical_name = None
         
         if canonical_name:
             column_to_canonical[c] = canonical_name
@@ -1316,7 +1317,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Downloads\HayoTel A To Z _ 99992 RN (4).xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\HAY3876-251218_2025-12-18.xlsx"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
