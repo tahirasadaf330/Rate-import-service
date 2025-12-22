@@ -103,6 +103,29 @@ class TestPreprocessingCore(unittest.TestCase):
                 self.assertNotIn("$", result)
                 self.assertNotIn("(USD)", result)
 
+    def test_billing_terms_two_columns_coalesce_to_min_inc(self):
+        """
+        When Billing Terms is split across two columns (min + inc), we should not error;
+        instead we should coalesce to a single Billing Increment like "1/60".
+        """
+        df = pd.DataFrame(
+            [[
+                "7840",         # CODES -> Dst Code
+                "0.1665",       # NEW RATE USD -> Rate
+                "09-04-2025",   # EFECTIVE DATE -> Effective Date
+                "1",            # BILLING TERMS (min)
+                "60",           # BILLING TERMS (inc)
+            ]],
+            columns=["CODES", "NEW RATE USD", "EFECTIVE DATE", "BILLING TERMS", "BILLING TERMS (2)"]
+        )
+
+        df2 = _canonicalize_headers(df.copy())
+        df3 = _synthesize_billing_increment(df2.copy())
+
+        # After coalescing, there should be exactly one Billing Increment column
+        self.assertEqual(int((df3.columns == "Billing Increment").sum()), 1)
+        self.assertEqual(df3["Billing Increment"].iloc[0], "1/60")
+
 
 class TestDataValidation(unittest.TestCase):
     """Test data validation functions using actual preprocess_data functions."""

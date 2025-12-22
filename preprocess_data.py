@@ -179,6 +179,26 @@ def _coalesce_billing_increment_dupes(df: pd.DataFrame, col_name: str = 'Billing
     return df
 
 
+def _make_unique_header_names(headers: list[str]) -> list[str]:
+    """
+    Make header names unique while preserving normalization/alias matching.
+
+    We suffix duplicates as " (2)", " (3)", ... and rely on `_preclean_header_token`
+    stripping parentheticals so aliasing still sees the original base header text.
+
+    Example:
+      ["BILLING TERMS", "BILLING TERMS"] -> ["BILLING TERMS", "BILLING TERMS (2)"]
+    """
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for h in headers:
+        base = "" if h is None else str(h)
+        n = seen.get(base, 0) + 1
+        seen[base] = n
+        out.append(base if n == 1 else f"{base} ({n})")
+    return out
+
+
 def _last_num(s: str) -> str:
     m = re.findall(r'\d+', str(s))
     return m[-1] if m else ''
@@ -670,6 +690,7 @@ ALIAS_MAP = {
     'pricemin': 'Rate',
     'recurring_charge': 'Rate',
     'allday': 'Rate',
+    'all_days': 'Rate',
     'usd': 'Rate',
     'future_rate': 'Rate',
     'price_min': 'Rate',
@@ -761,12 +782,12 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
     # First pass: collect all potential matches (exact and substring)
     for c in original:
         # Special cases first
-        if c.lower() == 'dst code name':
+        if preclean_map[c].lower() == 'dst code name':
             column_to_canonical[c] = 'Dst Code Name'
             canonical_to_columns.setdefault('Dst Code Name', []).append(c)
             continue
 
-        if c.lower() == 'current rate usd':
+        if preclean_map[c].lower() == 'current rate usd':
             column_to_canonical[c] = 'CURRENT RATE USD'
             canonical_to_columns.setdefault('CURRENT RATE USD', []).append(c)
             continue
@@ -796,14 +817,34 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
             # No conflict, use the single match
             final_alias_hit[column_candidates[0]] = canonical_name
         else:
-            # Multiple columns map to same canonical name -> always ambiguous; fail fast.
-            cand_keys = {c: key_map.get(c) for c in column_candidates}
-            raise ValueError(
-                f"Ambiguous columns for '{canonical_name}': {column_candidates}. "
-                f"These all map to '{canonical_name}' after normalization/aliasing. "
-                f"Normalized keys: {cand_keys}. "
-                f"Please keep only ONE column for '{canonical_name}' and remove/rename the others."
-            )
+            # Multiple columns map to same canonical name.
+            # For Billing Increment we intentionally allow duplicates (e.g., Min/Inc split into two cols)
+            # because `_synthesize_billing_increment` will coalesce them into a single "min/inc" string.
+            if canonical_name == 'Billing Increment':
+                # Only allow when the candidates are genuinely duplicates of the SAME header key,
+                # e.g. "BILLING TERMS" repeated twice. If they come from different keys (like
+                # "increment" + "billing_increment"), that is ambiguous and should still fail fast.
+                cand_keys_set = {key_map.get(cc) for cc in column_candidates}
+                if len(cand_keys_set) == 1:
+                    for cc in column_candidates:
+                        final_alias_hit[cc] = canonical_name
+                else:
+                    cand_keys = {c: key_map.get(c) for c in column_candidates}
+                    raise ValueError(
+                        f"Ambiguous columns for '{canonical_name}': {column_candidates}. "
+                        f"These all map to '{canonical_name}' after normalization/aliasing. "
+                        f"Normalized keys: {cand_keys}. "
+                        f"Please keep only ONE column for '{canonical_name}' and remove/rename the others."
+                    )
+            else:
+                # always ambiguous; fail fast.
+                cand_keys = {c: key_map.get(c) for c in column_candidates}
+                raise ValueError(
+                    f"Ambiguous columns for '{canonical_name}': {column_candidates}. "
+                    f"These all map to '{canonical_name}' after normalization/aliasing. "
+                    f"Normalized keys: {cand_keys}. "
+                    f"Please keep only ONE column for '{canonical_name}' and remove/rename the others."
+                )
     
     # Ensure all columns have an entry
     for c in original:
@@ -1254,6 +1295,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
 
     # 3) construct DF: header = that row; data = rows below it
     header_values = list(raw.iloc[header_row_idx].fillna('').astype(str))
+    header_values = _make_unique_header_names(header_values)
     df = raw.iloc[header_row_idx+1:].copy()
     df.columns = header_values
 
