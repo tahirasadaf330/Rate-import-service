@@ -608,7 +608,8 @@ def process_one_folder(folder: Path) -> str:
 
             try:
                 right_df = read_table(str(v), None)
-                result, stats = compare(left_df, right_df, as_of_date, 7, 0.0001)
+                # exact match mode (no tolerance)
+                result, stats = compare(left_df, right_df, as_of_date, 7, 0.0)
                 out_path = folder / f"{v.stem}_comparision_result.xlsx"
                 write_excel(result, str(out_path))
                 print(f"[{folder.name}] wrote result to {out_path}")

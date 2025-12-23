@@ -232,14 +232,17 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
 
             notes.append("billing increment changed")
 
-            # If the rate ALSO changed beyond tolerance, append a precise label:
+            # If the rate ALSO changed beyond tolerance (or exact-match mode), append a precise label:
             # Increase/Decrease vs Backdated Increase/Backdated Decrease
-            if can_compare_rate[i] and pd.notna(o_rate) and pd.notna(n_rate) and not np.isclose(n_rate, o_rate, atol=rate_tol):
+            if can_compare_rate[i] and pd.notna(o_rate) and pd.notna(n_rate) and (
+                (rate_tol <= 0 and float(n_rate) != float(o_rate))
+                or (rate_tol > 0 and not np.isclose(n_rate, o_rate, atol=rate_tol))
+            ):
                 delta = float(n_rate) - float(o_rate)
-                if delta > rate_tol:
+                if delta > (rate_tol if rate_tol > 0 else 0.0):
                     labels.append("Backdated Increase" if n_date < as_of else "Increase")
                     notes.append("rate increased")
-                elif delta < -rate_tol:
+                elif delta < (-(rate_tol if rate_tol > 0 else 0.0)):
                     labels.append("Backdated Decrease" if n_date < as_of else "Decrease")
                     notes.append("rate decreased")
 
@@ -253,7 +256,7 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
                 delta = n_rate - o_rate
                 # print(f" → Rate delta={delta}")
                 eff_note = effective_note(n_date, as_of, notice_days)
-                if delta > rate_tol:
+                if delta > (rate_tol if rate_tol > 0 else 0.0):
                     if n_date < as_of:
                         print("   Backdated Increase detected")
                         change_type = "Backdated Increase"
@@ -269,7 +272,7 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
                         change_type = "Increase"
                         status = "Rejected"
                         notes.append(eff_note)
-                elif delta < -rate_tol:
+                elif delta < (-(rate_tol if rate_tol > 0 else 0.0)):
                     if n_date < as_of:
                         print("   Backdated Decrease")
                         change_type = "Backdated Decrease"
@@ -316,8 +319,8 @@ def write_excel(df: pd.DataFrame, path: str) -> None:
 # --- test runner ---
 if __name__ == "__main__":
     # Example usage for testing
-    old_file = r"C:\Users\Tahira Sadaf\Desktop\projects\rate-import-service\attachments\tahira.sadaf_at_kingrevolution.com_20251106_121031\CPL_HAYOTEL_DEU-2025116-43120__cleaned.xlsx"
-    new_file = r"C:\Users\Tahira Sadaf\Desktop\projects\rate-import-service\attachments\tahira.sadaf_at_kingrevolution.com_20251106_121031\CPL_HAYOTEL_DEU-2025116-43120_jerasoft_comparison_cleaned.xlsx"
+    old_file = r"C:\Users\Tahira Sadaf\Documents\attachments\Apelby_-_HAYO_TELECOM_2025-12-22_184155_jerasoft_comparison_cleaned.xlsx"
+    new_file = r"C:\Users\Tahira Sadaf\Documents\attachments\Apelby_-_HAYO_TELECOM_2025-12-22_184155_cleaned.xlsx"
     output_file = "comparison_output.xlsx"
 
     # Read inputs
@@ -330,7 +333,7 @@ if __name__ == "__main__":
         right_df,
         as_of_date="2025-11-06",
         notice_days=7,
-        rate_tol=0.0001,
+        rate_tol=0.0,
     )
 
     # Show summary

@@ -239,7 +239,7 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
             COL_BI: ['1/60', '1/60'],
             COL_NAME: ['A', 'B']
         })
-        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0001)
+        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0)
         self.assertIn('New', result['Change Type'].values)
         # Accept any key variant for 'New'
         found = False
@@ -264,7 +264,7 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
             COL_BI: ['1/60'],
             COL_NAME: ['A']
         })
-        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0001)
+        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0)
         self.assertIn('Closed', result['Change Type'].values)
         found = False
         for k in ['Closed', 'closed', 'closed_code']:
@@ -282,7 +282,7 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
             COL_NAME: ['A']
         })
         right = left.copy()
-        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0001)
+        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0)
         self.assertIn('Unchanged', result['Change Type'].values)
         found = False
         for k in ['Unchanged', 'unchanged']:
@@ -306,7 +306,7 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
             COL_BI: ['1/60'],
             COL_NAME: ['A']
         })
-        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0001)
+        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0)
         self.assertIn('Increase', result['Change Type'].values)
         found = False
         for k in ['Increase', 'increase', 'increased']:
@@ -330,7 +330,7 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
             COL_BI: ['1/60'],
             COL_NAME: ['A']
         })
-        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0001)
+        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0)
         self.assertIn('Decrease', result['Change Type'].values)
         found = False
         for k in ['Decrease', 'decrease', 'decreased']:
@@ -354,7 +354,7 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
             COL_BI: ['2/60'],
             COL_NAME: ['A']
         })
-        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0001)
+        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0)
         self.assertIn('Billing Increments Changes', result['Change Type'].values)
         found = False
         for k in ['Billing Increments Changes', 'billing_increment_changes', 'Billing Increment Changes']:
@@ -378,7 +378,7 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
             COL_BI: ['1/60'],
             COL_NAME: ['A']
         })
-        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0001)
+        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0)
         self.assertIn('Backdated Increase', result['Change Type'].values)
         found = False
         for k in ['Backdated Increase', 'backdated_increase']:
@@ -402,7 +402,7 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
             COL_BI: ['1/60'],
             COL_NAME: ['A']
         })
-        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0001)
+        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0)
         self.assertIn('Backdated Decrease', result['Change Type'].values)
         found = False
         for k in ['Backdated Decrease', 'backdated_decrease']:
@@ -426,7 +426,7 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
             COL_BI: ['1/60'],
             COL_NAME: ['A']
         })
-        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0001)
+        result, stats = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0)
         # Accept any column name variant for 'Effective Date Note', fallback to 'Notes' column
         col_found = None
         for col in ['Effective Date Note', 'effective_date_note', 'EffectiveDateNote', 'effectiveDateNote']:
@@ -462,7 +462,7 @@ if __name__ == '__main__':
         right_df,
         as_of_date="2025-11-20",
         notice_days=7,
-        rate_tol=0.0001,
+        rate_tol=0.0,
     )
     print("\n=== Summary Stats ===")
     for k, v in stats.items():
