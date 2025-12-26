@@ -21,7 +21,9 @@ from typing import List, Dict, Any
 
 from dotenv import load_dotenv
 from database import get_conn
-from rate_upload_to_Jera import bulk_upload_comparison_to_jerasoft
+from database import fetch_rate_upload_details_for_upload
+from rate_upload_to_Jera import bulk_upload_df_to_jerasoft
+import pandas as pd
 
 # Load environment
 load_dotenv()
@@ -136,40 +138,44 @@ def process_bulk_upload(upload: Dict[str, Any], dry_run: bool = False) -> bool:
     print(f"   Total rows: {upload['total_rows']}")
     
     try:
-        # Get the comparison file path from the database column
-        comparison_file = upload.get('comparison_file_path')
-        
-        if not comparison_file:
-            # No fallback needed - comparison_file_path column should be populated
-            print("⚠️ No comparison file path in upload record")
-            print("❌ No comparison file found in upload record")
+        # Build upload "sheet" from DB rows (reflects UI-approved statuses)
+        statuses_env = os.getenv("JERASOFT_UPLOAD_STATUSES", "Accepted")
+        accepted_statuses = tuple(s.strip() for s in (statuses_env or "").split(",") if s.strip()) or ("Accepted",)
+
+        details = fetch_rate_upload_details_for_upload(upload_id, statuses=accepted_statuses)
+        df = pd.DataFrame(details or [])
+        if df.empty:
+            print("⚠️ No accepted rows found in DB for this upload_id")
             update_bulk_upload_status(upload_id, 'failed', {
-                'error': 'comparison_file_not_found',
+                'error': 'no_accepted_rows_in_db',
+                'accepted_statuses': list(accepted_statuses),
                 'processed_at': datetime.now().isoformat()
             })
             return False
-        
-        # Check if file exists
-        if not os.path.exists(comparison_file):
-            print(f"❌ Comparison file not found: {comparison_file}")
-            update_bulk_upload_status(upload_id, 'failed', {
-                'error': 'comparison_file_missing',
-                'file_path': comparison_file,
-                'processed_at': datetime.now().isoformat()
-            })
-            return False
-        
-        print(f"📁 Found comparison file: {comparison_file}")
+
+        # Map DB column names -> uploader expected names
+        rename = {
+            "dst_code": "Code",
+            "rate_new": "New Rate",
+            "effective_date": "Effective Date",
+            "new_billing_increment": "New Billing Increment",
+            "status": "Status",
+            "code_name": "Dst Code Name",
+            "notes": "Notes",
+            "change_type": "Change Type",
+        }
+        df = df.rename(columns=rename)
         
         # Mark as processing
         if not dry_run:
             update_bulk_upload_status(upload_id, 'processing')
         
         # Perform bulk upload
-        result = bulk_upload_comparison_to_jerasoft(
-            comparison_file_path=comparison_file,
+        result = bulk_upload_df_to_jerasoft(
+            df=df,
             table_id=table_id,
-            dry_run=dry_run
+            accepted_statuses=accepted_statuses,
+            dry_run=dry_run,
         )
         
         if result.get('status') == 'success':

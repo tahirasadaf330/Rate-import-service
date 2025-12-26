@@ -103,5 +103,17 @@ class TestRateUploadToJera(unittest.TestCase):
         self.assertEqual(result['status'], 'success')
         self.assertEqual(result['rows_uploaded'], 1)
 
+    @patch('rate_upload_to_Jera.bulk_import_rates')
+    def test_bulk_upload_df_to_jerasoft(self, mock_bulk):
+        mock_bulk.return_value = {'status': 'success', 'rows_uploaded': 1}
+        df = pd.DataFrame({
+            'Code': ['1'],
+            'New Rate': [0.05],
+            'Effective Date': ['2024-01-01'],
+            'Status': ['Accepted']
+        })
+        result = rate_upload_to_Jera.bulk_upload_df_to_jerasoft(df, 1)
+        self.assertEqual(result['status'], 'success')
+
 if __name__ == '__main__':
     unittest.main()

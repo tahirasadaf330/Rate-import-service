@@ -10,6 +10,7 @@ from psycopg2.extras import execute_values, Json
 from pathlib import Path
 from typing import Optional
 from typing import Optional, Tuple
+from typing import Sequence
 
 
 # Load environment variables
@@ -472,6 +473,51 @@ def bulk_insert_rate_upload_details(
                 total += cur.rowcount  # count for this chunk (single statement)
         conn.commit()
     return total
+
+
+def fetch_rate_upload_details_for_upload(
+    rate_upload_id: int,
+    *,
+    statuses: Optional[Sequence[str]] = ("Accepted",),
+) -> List[Dict[str, Any]]:
+    """
+    Fetch rate_upload_details rows for a given upload, typically for pushing to JeraSoft.
+
+    Notes:
+    - This reads the CURRENT status stored in DB (what the UI/admin set), not the Excel file.
+    - `statuses` is optional; pass None/empty to fetch all statuses.
+    """
+    if not rate_upload_id:
+        return []
+
+    where_status = ""
+    params: list[Any] = [rate_upload_id]
+    if statuses:
+        where_status = "AND status = ANY(%s)"
+        params.append(list(statuses))
+
+    sql = f"""
+        SELECT
+            dst_code,
+            code_name,
+            rate_new,
+            effective_date,
+            new_billing_increment,
+            status,
+            change_type,
+            notes
+        FROM rate_upload_details
+        WHERE rate_upload_id = %s
+        {where_status}
+        ORDER BY created_at ASC, dst_code ASC
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, tuple(params))
+        rows = cur.fetchall()
+        cols = [d[0] for d in cur.description]
+
+    return [dict(zip(cols, r)) for r in rows]
     
 def fetch_authorized_sender_emails(active_only: bool = True) -> List[str]:
     """
