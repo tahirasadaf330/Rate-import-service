@@ -17,6 +17,7 @@ from database import (
     insert_rate_upload,
     bulk_insert_rate_upload_details,
     mark_processing_stage,
+    fetch_authorized_sender_date_format,
 )
 from jerasoft import export_rates_by_query, get_table_id_by_name, fetch_active_current_future_rates, save_rates_to_excel
 
@@ -319,8 +320,28 @@ def process_one_folder(folder: Path) -> str:
     meta = load_metadata(folder)
     if not meta:
         return f"[{folder.name}] skip: no/invalid metadata.json"
-    if not bool(meta.get("date_verification_ingestion_status")):
-        return f"[{folder.name}] skip: waiting for date verification approval"
+    # DB is source-of-truth for date format. If DB has a format, always use it.
+    sender_fmt = None
+    try:
+        sender_fmt = fetch_authorized_sender_date_format(meta.get("sender"))
+    except Exception:
+        sender_fmt = None
+
+    if sender_fmt:
+        # Override metadata (even if it was auto-detected as YYYY-MM-DD)
+        if (meta.get("date_format_identified") or "").strip() != sender_fmt:
+            meta["date_format_identified"] = sender_fmt
+        if not bool(meta.get("date_verification_ingestion_status")):
+            meta["date_verification_ingestion_status"] = True
+        save_metadata(folder, meta)
+        try:
+            mark_processing_stage(directory_name=folder.name, stage="date_format_fetched")
+        except Exception:
+            pass
+    else:
+        # No DB format: fall back to existing ingest/manual approval gate
+        if not bool(meta.get("date_verification_ingestion_status")):
+            return f"[{folder.name}] skip: waiting for date verification approval"
 
     # -------- 1) JeraSoft export (if needed) --------
     
@@ -426,6 +447,13 @@ def process_one_folder(folder: Path) -> str:
     meta = load_metadata(folder) or {}
     pre_map: dict = meta.get("preprocessed_results", {}) or {}
     if not pre_map:
+        # DB-first: if available, prefer sender-level format over metadata for parsing vendor files
+        fmt_db = sender_fmt
+        if not fmt_db:
+            try:
+                fmt_db = fetch_authorized_sender_date_format(meta.get("sender"))
+            except Exception:
+                fmt_db = None
         any_files = False
         for file_path in sorted(p for p in folder.iterdir() if p.is_file()):
             if file_path.name.lower() == "metadata.json":
@@ -437,7 +465,7 @@ def process_one_folder(folder: Path) -> str:
             in_path = str(file_path)
             out_path = str(cleaned_out_path(file_path))
 
-            date_fmt = (meta.get("date_format_identified") or "").strip() or None
+            date_fmt = (fmt_db or (meta.get("date_format_identified") or "").strip() or None)
             fname = file_path.name.lower()
             # force ISO for jerasoft outputs
             date_fmt_to_use = "YYYY-MM-DD" if ("jerasoft_comparison_all" in fname or "jerasoft_comparison" in fname) else date_fmt
