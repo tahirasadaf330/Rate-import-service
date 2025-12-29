@@ -21,6 +21,7 @@ import tempfile
 import os
 import json
 import shutil
+from unittest.mock import patch
 from pathlib import Path
 from datetime import datetime, timezone
 import pandas as pd
@@ -32,6 +33,11 @@ from multithreading import (
 
 class TestMultithreading(unittest.TestCase):
     def setUp(self):
+        # Prevent unit tests from hitting a real DB (process_one_folder is DB-first for date format)
+        self._db_fmt_patcher = patch("multithreading.fetch_authorized_sender_date_format", return_value=None)
+        self._db_fmt_patcher.start()
+        self.addCleanup(self._db_fmt_patcher.stop)
+
         self.test_dir = Path(tempfile.mkdtemp())
         self.meta_path = self.test_dir / "metadata.json"
         self.meta_data = {
@@ -145,6 +151,64 @@ class TestMultithreading(unittest.TestCase):
             self.assertIn("'NoneType' object has no attribute 'name'", str(e))
             msg = "skip"
         self.assertIn("skip", msg)
+
+    def test_process_one_folder_waits_when_no_db_and_not_approved(self):
+        meta = load_metadata(self.test_dir)
+        meta["date_verification_ingestion_status"] = False
+        save_metadata(self.test_dir, meta)
+        msg = process_one_folder(self.test_dir)
+        self.assertIn("waiting for date verification approval", msg)
+
+    def test_process_one_folder_db_format_overrides_metadata(self):
+        # Ensure folder is NOT approved in metadata, but DB has format -> should proceed past approval gate
+        meta = load_metadata(self.test_dir)
+        meta["date_verification_ingestion_status"] = False
+        meta["date_format_identified"] = "YYYY-MM-DD"
+        meta["jerasoft_preprocessed"] = False
+        meta["attachments"] = ["dummy.xlsx"]
+        meta["directory"] = str(self.test_dir)
+        save_metadata(self.test_dir, meta)
+
+        # create dummy attachment so export path has a basename
+        (self.test_dir / "dummy.xlsx").write_bytes(b"")
+
+        with patch("multithreading.fetch_authorized_sender_date_format", return_value="MM-DD-YYYY"), \
+             patch("multithreading.export_rates_by_query", return_value="boom"), \
+             patch("multithreading.mark_processing_stage", return_value=None):
+            msg = process_one_folder(self.test_dir)
+
+        self.assertIn("export error", msg)
+        meta2 = load_metadata(self.test_dir)
+        self.assertEqual(meta2.get("date_format_identified"), "MM-DD-YYYY")
+        self.assertTrue(bool(meta2.get("date_verification_ingestion_status")))
+
+    def test_cleaning_uses_db_format_over_metadata(self):
+        # approved folder, but metadata has a different date_format than DB
+        meta = load_metadata(self.test_dir)
+        meta["date_verification_ingestion_status"] = True
+        meta["date_format_identified"] = "YYYY-MM-DD"
+        meta["jerasoft_preprocessed"] = True
+        meta["comparision_result"] = {"result": "skip for test"}  # avoid compare stage
+        meta["preprocessed_results"] = {}
+        save_metadata(self.test_dir, meta)
+
+        vendor = self.test_dir / "vendor.csv"
+        vendor.write_text("a,b\n1,2\n", encoding="utf-8")
+
+        seen = {}
+
+        def _fake_clean(in_path, out_path, sheet, date_format_email=None):
+            seen["date_format_email"] = date_format_email
+            return pd.DataFrame({"x": [1]})
+
+        with patch("multithreading.fetch_authorized_sender_date_format", return_value="MM-DD-YYYY"), \
+             patch("multithreading.load_clean_rates", side_effect=_fake_clean), \
+             patch("multithreading.mark_processing_stage", return_value=None):
+            msg = process_one_folder(self.test_dir)
+
+        # it should attempt DB push and then skip because comparision_result is not ok
+        self.assertIn("skip DB push", msg)
+        self.assertEqual(seen.get("date_format_email"), "MM-DD-YYYY")
 
     def test_run_pipeline_mt(self):
         # Should print no folders to process

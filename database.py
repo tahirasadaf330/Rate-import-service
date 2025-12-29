@@ -554,6 +554,37 @@ def fetch_authorized_sender_emails(active_only: bool = True) -> List[str]:
 
     return emails
 
+
+def fetch_authorized_sender_date_format(email: Optional[str]) -> Optional[str]:
+    """
+    Fetch per-sender date_format from authorized_senders.
+
+    Notes:
+    - Requires `authorized_senders.date_format` column to exist.
+    - Returns None if not found or on DB errors (fail-open).
+    """
+    if not email:
+        return None
+    e = str(email).strip()
+    if not e:
+        return None
+
+    sql = """
+        SELECT date_format
+        FROM authorized_senders
+        WHERE LOWER(email) = LOWER(%s)
+        LIMIT 1
+    """
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, (e,))
+            row = cur.fetchone()
+        fmt = row[0] if row else None
+        fmt = str(fmt).strip() if fmt is not None else None
+        return fmt or None
+    except Exception:
+        return None
+
 # ____________ Ingesting file for date format review _________________
 
 

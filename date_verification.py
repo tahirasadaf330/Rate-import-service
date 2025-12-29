@@ -1,4 +1,8 @@
-from database import mark_processing_stage,insert_or_update_ingest_file
+from database import (
+    mark_processing_stage,
+    insert_or_update_ingest_file,
+    fetch_authorized_sender_date_format,
+)
 from datetime import date, datetime, timezone
 import pandas as pd
 from pathlib import Path
@@ -146,11 +150,23 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
             print(f"[INGEST][SKIP] {folder.name}: metadata.attachments missing/empty")
             skipped += 1
             continue
+        
+        # DB-first: if sender already has a saved date_format, we will still upsert ingest_files
+        # but mark it approved with that format.
+        try:
+            sender_email = (meta.get("sender") or "").strip() or None
+        except Exception:
+            sender_email = None
+        sender_fmt = None
+        try:
+            sender_fmt = fetch_authorized_sender_date_format(sender_email)
+        except Exception:
+            sender_fmt = None
 
         # Build the preview_cache
         preview_cache: list[dict] = []
         error_message: Optional[str] = None
-        autodetected: bool = False  # only possible for Excel
+        autodetected: bool = False  # only possible for Excel and only used when DB format is missing
 
         try:
             ext = fpath.suffix.lower()
@@ -163,7 +179,8 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
             elif ext in EXCEL_EXTS:
                 # Read natively (no dtype=str) to detect Excel-native date cells
                 df_native = _read_excel_native(str(fpath), sheet=0)
-                autodetected = _has_native_datetimes(df_native)
+                # Only attempt autodetect when we don't already have a sender-level format
+                autodetected = (not bool(sender_fmt)) and _has_native_datetimes(df_native)
                 # Stringified preview for UI
                 preview_cache = _df_preview_records(df_native, MAX_PREVIEW_ROWS)
 
@@ -187,9 +204,18 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
         processed_at = _parse_iso_utc_dt(meta.get("processed_at_utc"))
         file_path = str(fpath)
 
-        # NEW: optional DB flags when auto-detected for Excel
+        # Optional DB flags when:
+        # - sender_fmt exists (DB-first) -> treat as approved using that format
+        # - autodetected Excel native dates -> approve as YYYY-MM-DD
         upsert_kwargs = {}
-        if ext in EXCEL_EXTS and autodetected:
+        if sender_fmt:
+            upsert_kwargs.update({
+                "status": "approved",
+                "date_format": sender_fmt,
+                "approved_at": datetime.now(timezone.utc),
+                "is_format_auto_detected": False,
+            })
+        elif ext in EXCEL_EXTS and autodetected:
             upsert_kwargs.update({
                 "status": "approved",
                 "date_format": "YYYY-MM-DD",
@@ -216,7 +242,14 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
 
             # If we auto-detected native dates for Excel, mark folder approved too
                         # If we auto-detected native dates for Excel, mark folder approved too
-            if ext in EXCEL_EXTS and autodetected:
+            if sender_fmt:
+                meta["date_verification_ingestion_status"] = True
+                meta["date_format_identified"] = sender_fmt
+                try:
+                    mark_processing_stage(directory_name=folder.name, stage="date_format_fetched")
+                except Exception as e:
+                    print(f"[STATUS][WARN] failed to mark date_format_fetched for {folder.name}: {e}")
+            elif ext in EXCEL_EXTS and autodetected:
                 meta["date_verification_ingestion_status"] = True
                 meta["date_format_identified"] = "YYYY-MM-DD"
                 try:
@@ -286,8 +319,9 @@ def mark_date_verification_ingestion(path_to_format: Mapping[str, Optional[str]]
             print(f"[INGEST] Already marked true: {d}")
             continue
 
+        chosen_fmt = dir_fmt.get(d)
         meta["date_verification_ingestion_status"] = True
-        meta["date_format_identified"] = dir_fmt.get(d)
+        meta["date_format_identified"] = chosen_fmt
         try:
             mark_processing_stage(directory_name=d.name, stage="date_format_fetched")
         except Exception as e:
