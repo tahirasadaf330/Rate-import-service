@@ -28,6 +28,40 @@ import pandas as pd
 # Load environment
 load_dotenv()
 
+def export_db_upload_dataframe(
+    df: pd.DataFrame,
+    *,
+    upload_id: int,
+    comparison_file_path: str | None = None,
+    suffix: str = "accepted_db_rows",
+) -> Path:
+    """
+    Write the DB-built upload DataFrame to an audit file under attachments.
+
+    If comparison_file_path points into attachments/<folder>/..., we write alongside it.
+    Otherwise, we write to ./attachments/.
+    """
+    base_dir = Path("attachments")
+    cfp = (comparison_file_path or "").strip()
+    if cfp:
+        try:
+            p = Path(cfp)
+            # if it's just a filename, p.parent will be '.' → keep base_dir as attachments/
+            if str(p.parent) not in ("", "."):
+                base_dir = p.parent
+        except Exception:
+            pass
+
+    try:
+        base_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # last resort: current dir
+        base_dir = Path(".")
+
+    out_path = base_dir / f"upload_{upload_id}_{suffix}.xlsx"
+    df.to_excel(out_path, index=False)
+    return out_path
+
 def get_pending_bulk_uploads() -> List[Dict[str, Any]]:
     """Get rate_uploads marked for bulk upload."""
     sql = """
@@ -130,6 +164,7 @@ def process_bulk_upload(upload: Dict[str, Any], dry_run: bool = False) -> bool:
     """
     upload_id = upload['id']
     table_id = upload['jera_table_id']
+    comparison_file_path = upload.get("comparison_file_path")
     
     print(f"\n🔄 Processing upload ID {upload_id}")
     print(f"   Subject: {upload['subject']}")
@@ -165,6 +200,17 @@ def process_bulk_upload(upload: Dict[str, Any], dry_run: bool = False) -> bool:
             "change_type": "Change Type",
         }
         df = df.rename(columns=rename)
+
+        # Write an audit copy of what we are about to upload (DB-built sheet)
+        try:
+            out_path = export_db_upload_dataframe(
+                df,
+                upload_id=int(upload_id),
+                comparison_file_path=str(comparison_file_path) if comparison_file_path else None,
+            )
+            print(f"📝 Wrote DB upload sheet: {out_path}")
+        except Exception as e:
+            print(f"⚠️ Failed to write DB upload sheet for upload_id={upload_id}: {e}")
         
         # Mark as processing
         if not dry_run:

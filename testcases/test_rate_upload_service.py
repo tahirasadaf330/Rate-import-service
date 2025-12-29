@@ -43,7 +43,8 @@ class TestRateUploadService(unittest.TestCase):
     @patch('rate_upload_service.bulk_upload_df_to_jerasoft')
     @patch('rate_upload_service.fetch_rate_upload_details_for_upload')
     @patch('rate_upload_service.update_bulk_upload_status')
-    def test_process_bulk_upload_success(self, mock_update, mock_fetch, mock_bulk):
+    @patch('rate_upload_service.export_db_upload_dataframe')
+    def test_process_bulk_upload_success(self, mock_export, mock_update, mock_fetch, mock_bulk):
         mock_fetch.return_value = [
             {"dst_code": "1001", "rate_new": 0.05, "effective_date": "2025-01-01", "status": "Accepted"}
         ]
@@ -54,11 +55,13 @@ class TestRateUploadService(unittest.TestCase):
         }
         result = rate_upload_service.process_bulk_upload(upload, dry_run=True)
         self.assertTrue(result)
+        self.assertTrue(mock_export.called)
 
     @patch('rate_upload_service.bulk_upload_df_to_jerasoft')
     @patch('rate_upload_service.fetch_rate_upload_details_for_upload')
     @patch('rate_upload_service.update_bulk_upload_status')
-    def test_process_bulk_upload_failure(self, mock_update, mock_fetch, mock_bulk):
+    @patch('rate_upload_service.export_db_upload_dataframe')
+    def test_process_bulk_upload_failure(self, mock_export, mock_update, mock_fetch, mock_bulk):
         mock_fetch.return_value = [
             {"dst_code": "1001", "rate_new": 0.05, "effective_date": "2025-01-01", "status": "Accepted"}
         ]
@@ -69,6 +72,7 @@ class TestRateUploadService(unittest.TestCase):
         }
         result = rate_upload_service.process_bulk_upload(upload, dry_run=True)
         self.assertFalse(result)
+        self.assertTrue(mock_export.called)
 
     @patch('rate_upload_service.get_pending_bulk_uploads')
     def test_list_pending_uploads(self, mock_get_pending):
