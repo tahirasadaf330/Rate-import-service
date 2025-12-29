@@ -703,6 +703,7 @@ ALIAS_MAP = {
     'effective_from': 'Effective Date',
     'start_date': 'Effective Date',
     'valid_from': 'Effective Date',
+    'valid_date': 'Effective Date',
     'date': 'Effective Date',
     'effectivedate': 'Effective Date',
     'efective_date': 'Effective Date',
@@ -1367,7 +1368,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\20251219162015045_CHN_CMI-ZAF_HayoSA_PL_USD_Premium_1_FinalPL.xls"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\HAYT_1530_CLI_USD_Partial_20251224.xlsx"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 

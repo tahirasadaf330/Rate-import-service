@@ -21,10 +21,46 @@ from typing import List, Dict, Any
 
 from dotenv import load_dotenv
 from database import get_conn
-from rate_upload_to_Jera import bulk_upload_comparison_to_jerasoft
+from database import fetch_rate_upload_details_for_upload
+from rate_upload_to_Jera import bulk_upload_df_to_jerasoft
+import pandas as pd
 
 # Load environment
 load_dotenv()
+
+def export_db_upload_dataframe(
+    df: pd.DataFrame,
+    *,
+    upload_id: int,
+    comparison_file_path: str | None = None,
+    suffix: str = "accepted_db_rows",
+) -> Path:
+    """
+    Write the DB-built upload DataFrame to an audit file under attachments.
+
+    If comparison_file_path points into attachments/<folder>/..., we write alongside it.
+    Otherwise, we write to ./attachments/.
+    """
+    base_dir = Path("attachments")
+    cfp = (comparison_file_path or "").strip()
+    if cfp:
+        try:
+            p = Path(cfp)
+            # if it's just a filename, p.parent will be '.' → keep base_dir as attachments/
+            if str(p.parent) not in ("", "."):
+                base_dir = p.parent
+        except Exception:
+            pass
+
+    try:
+        base_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # last resort: current dir
+        base_dir = Path(".")
+
+    out_path = base_dir / f"upload_{upload_id}_{suffix}.xlsx"
+    df.to_excel(out_path, index=False)
+    return out_path
 
 def get_pending_bulk_uploads() -> List[Dict[str, Any]]:
     """Get rate_uploads marked for bulk upload."""
@@ -128,6 +164,7 @@ def process_bulk_upload(upload: Dict[str, Any], dry_run: bool = False) -> bool:
     """
     upload_id = upload['id']
     table_id = upload['jera_table_id']
+    comparison_file_path = upload.get("comparison_file_path")
     
     print(f"\n🔄 Processing upload ID {upload_id}")
     print(f"   Subject: {upload['subject']}")
@@ -136,40 +173,55 @@ def process_bulk_upload(upload: Dict[str, Any], dry_run: bool = False) -> bool:
     print(f"   Total rows: {upload['total_rows']}")
     
     try:
-        # Get the comparison file path from the database column
-        comparison_file = upload.get('comparison_file_path')
-        
-        if not comparison_file:
-            # No fallback needed - comparison_file_path column should be populated
-            print("⚠️ No comparison file path in upload record")
-            print("❌ No comparison file found in upload record")
+        # Build upload "sheet" from DB rows (reflects UI-approved statuses)
+        statuses_env = os.getenv("JERASOFT_UPLOAD_STATUSES", "Accepted")
+        accepted_statuses = tuple(s.strip() for s in (statuses_env or "").split(",") if s.strip()) or ("Accepted",)
+
+        details = fetch_rate_upload_details_for_upload(upload_id, statuses=accepted_statuses)
+        df = pd.DataFrame(details or [])
+        if df.empty:
+            print("⚠️ No accepted rows found in DB for this upload_id")
             update_bulk_upload_status(upload_id, 'failed', {
-                'error': 'comparison_file_not_found',
+                'error': 'no_accepted_rows_in_db',
+                'accepted_statuses': list(accepted_statuses),
                 'processed_at': datetime.now().isoformat()
             })
             return False
-        
-        # Check if file exists
-        if not os.path.exists(comparison_file):
-            print(f"❌ Comparison file not found: {comparison_file}")
-            update_bulk_upload_status(upload_id, 'failed', {
-                'error': 'comparison_file_missing',
-                'file_path': comparison_file,
-                'processed_at': datetime.now().isoformat()
-            })
-            return False
-        
-        print(f"📁 Found comparison file: {comparison_file}")
+
+        # Map DB column names -> uploader expected names
+        rename = {
+            "dst_code": "Code",
+            "rate_new": "New Rate",
+            "effective_date": "Effective Date",
+            "new_billing_increment": "New Billing Increment",
+            "status": "Status",
+            "code_name": "Dst Code Name",
+            "notes": "Notes",
+            "change_type": "Change Type",
+        }
+        df = df.rename(columns=rename)
+
+        # Write an audit copy of what we are about to upload (DB-built sheet)
+        try:
+            out_path = export_db_upload_dataframe(
+                df,
+                upload_id=int(upload_id),
+                comparison_file_path=str(comparison_file_path) if comparison_file_path else None,
+            )
+            print(f"📝 Wrote DB upload sheet: {out_path}")
+        except Exception as e:
+            print(f"⚠️ Failed to write DB upload sheet for upload_id={upload_id}: {e}")
         
         # Mark as processing
         if not dry_run:
             update_bulk_upload_status(upload_id, 'processing')
         
         # Perform bulk upload
-        result = bulk_upload_comparison_to_jerasoft(
-            comparison_file_path=comparison_file,
+        result = bulk_upload_df_to_jerasoft(
+            df=df,
             table_id=table_id,
-            dry_run=dry_run
+            accepted_statuses=accepted_statuses,
+            dry_run=dry_run,
         )
         
         if result.get('status') == 'success':

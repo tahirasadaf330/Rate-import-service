@@ -547,6 +547,57 @@ def bulk_upload_comparison_to_jerasoft(comparison_file_path: str, table_id: int,
             "upload_method": "bulk_file_upload"
         }
 
+
+def bulk_upload_df_to_jerasoft(df: pd.DataFrame, table_id: int,
+                              accepted_statuses: Tuple[str, ...] = ("Accepted",),
+                              dry_run: bool = False) -> Dict:
+    """
+    Bulk upload using an in-memory DataFrame (e.g., rows fetched from DB).
+
+    Expected input columns (minimum): Code, New Rate, Effective Date
+    Optional: Status (will be filtered by accepted_statuses if present)
+    """
+    print(f"🚀 Starting BULK upload from DB rows to table {table_id}")
+    if df is None:
+        raise ValueError("df is required")
+
+    df = df.copy()
+    print(f"📊 Loaded {len(df)} rows from DB")
+
+    if accepted_statuses and 'Status' in df.columns:
+        original_count = len(df)
+        df['Status'] = df['Status'].astype(str).str.strip()
+        df = df[df['Status'].isin(accepted_statuses)]
+        print(f"📋 Filtered to {len(df)} rows with accepted statuses: {accepted_statuses}")
+        if len(df) == 0:
+            return {"status": "skipped", "reason": "no_accepted_rates", "original_rows": original_count}
+
+    required_cols = ['Code', 'New Rate', 'Effective Date']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+
+    # Drop rows that can't be uploaded (no new rate / no effective date)
+    df = df[df['Code'].astype(str).str.strip().ne("")]
+    df = df[df['New Rate'].notna()]
+    df = df[df['Effective Date'].notna()]
+    if len(df) == 0:
+        return {"status": "skipped", "reason": "no_valid_rows", "original_rows": 0}
+
+    try:
+        result = bulk_import_rates(df, table_id, dry_run=dry_run)
+        result["filtered_rows"] = len(df)
+        result["upload_method"] = "bulk_db_rows"
+        print(f"✅ Bulk upload completed! Status: {result.get('status')}")
+        return result
+    except Exception as e:
+        print(f"❌ Bulk upload failed: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "upload_method": "bulk_db_rows"
+        }
+
 # ──────────────────────── EXAMPLE USAGE ────────────────────────
 def example_usage():
     """Example of how to use both upload methods."""
