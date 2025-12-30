@@ -118,6 +118,7 @@ class TestDateVerification(unittest.TestCase):
              patch("date_verification._read_excel_native", return_value=df_native), \
              patch("date_verification._has_native_datetimes", return_value=True), \
              patch("date_verification.insert_or_update_ingest_file", side_effect=_fake_upsert), \
+             patch("date_verification.upsert_authorized_sender_date_format", return_value=True) as mock_auth_upsert, \
              patch("date_verification.mark_processing_stage", return_value=None):
             scanned, inserted, skipped = date_verification.ingest_files_for_manual_date(root)
 
@@ -129,6 +130,7 @@ class TestDateVerification(unittest.TestCase):
         self.assertTrue(meta2.get("date_verification_ingestion"))
         self.assertTrue(meta2.get("date_verification_ingestion_status"))
         self.assertEqual(meta2.get("date_format_identified"), "YYYY-MM-DD")
+        self.assertTrue(mock_auth_upsert.called)
 
 
 if __name__ == '__main__':

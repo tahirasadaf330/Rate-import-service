@@ -585,6 +585,63 @@ def fetch_authorized_sender_date_format(email: Optional[str]) -> Optional[str]:
     except Exception:
         return None
 
+
+def upsert_authorized_sender_date_format(
+    *,
+    email: Optional[str],
+    date_format: Optional[str],
+    status: Optional[bool] = True,
+    updated_by: Optional[int] = None,
+) -> bool:
+    """
+    Upsert (insert or update) `authorized_senders.date_format` for a sender email.
+
+    Used by:
+      - backend autodetect (to persist YYYY-MM-DD when we detect native Excel dates)
+      - UI/manual approval (if you choose to call this from your backend/API layer)
+
+    Returns True on successful DB commit; False otherwise.
+    """
+    if not email:
+        return False
+    e = str(email).strip()
+    if not e:
+        return False
+
+    fmt = str(date_format).strip() if date_format is not None else ""
+    if not fmt:
+        return False
+
+    if updated_by is None:
+        sql = """
+            INSERT INTO authorized_senders (email, status, date_format, created_at, updated_at)
+            VALUES (%s, COALESCE(%s, TRUE), %s, NOW(), NOW())
+            ON CONFLICT (email) DO UPDATE
+               SET date_format = EXCLUDED.date_format,
+                   status      = COALESCE(EXCLUDED.status, authorized_senders.status),
+                   updated_at  = NOW()
+        """
+        params = (e, status, fmt)
+    else:
+        sql = """
+            INSERT INTO authorized_senders (email, status, date_format, updated_by, created_at, updated_at)
+            VALUES (%s, COALESCE(%s, TRUE), %s, %s, NOW(), NOW())
+            ON CONFLICT (email) DO UPDATE
+               SET date_format = EXCLUDED.date_format,
+                   status      = COALESCE(EXCLUDED.status, authorized_senders.status),
+                   updated_by  = EXCLUDED.updated_by,
+                   updated_at  = NOW()
+        """
+        params = (e, status, fmt, int(updated_by))
+
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
 # ____________ Ingesting file for date format review _________________
 
 
