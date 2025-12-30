@@ -2,6 +2,7 @@ from database import (
     mark_processing_stage,
     insert_or_update_ingest_file,
     fetch_authorized_sender_date_format,
+    upsert_authorized_sender_date_format,
 )
 from datetime import date, datetime, timezone
 import pandas as pd
@@ -252,6 +253,14 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
             elif ext in EXCEL_EXTS and autodetected:
                 meta["date_verification_ingestion_status"] = True
                 meta["date_format_identified"] = "YYYY-MM-DD"
+                # Autodetected date format should be persisted per-sender so next emails can reuse it.
+                try:
+                    upsert_authorized_sender_date_format(
+                        email=email_address,
+                        date_format="YYYY-MM-DD",
+                    )
+                except Exception:
+                    pass
                 try:
                     mark_processing_stage(directory_name=folder.name, stage="date_format_fetched")
                 except Exception as e:
