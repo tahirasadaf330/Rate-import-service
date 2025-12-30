@@ -317,7 +317,17 @@ def bulk_import_rates(df: pd.DataFrame, table_id: int,
     jera_df = df.copy()
     if 'Code' in jera_df.columns:
         jera_df['code'] = jera_df['Code']
-        jera_df['code_name'] = jera_df['Code']  # Use code as name if no separate name column
+        # Prefer a real destination/name column when present; otherwise fall back to code.
+        if 'Dst Code Name' in jera_df.columns:
+            try:
+                name_s = jera_df['Dst Code Name'].astype(str).str.strip()
+                code_s = jera_df['Code'].astype(str).str.strip()
+                name_s = name_s.replace({"nan": "", "None": ""})
+                jera_df['code_name'] = name_s.where(name_s.ne(""), other=code_s)
+            except Exception:
+                jera_df['code_name'] = jera_df['Code']
+        else:
+            jera_df['code_name'] = jera_df['Code']  # fallback
     if 'New Rate' in jera_df.columns:
         jera_df['value'] = jera_df['New Rate']
     if 'Effective Date' in jera_df.columns:
