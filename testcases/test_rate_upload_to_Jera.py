@@ -2,6 +2,8 @@ import unittest
 from unittest.mock import patch, MagicMock
 import pandas as pd
 import rate_upload_to_Jera
+import tempfile
+from pathlib import Path
 
 class TestRateUploadToJera(unittest.TestCase):
     def setUp(self):
@@ -77,17 +79,25 @@ class TestRateUploadToJera(unittest.TestCase):
         mock_exists.return_value = True
         df = pd.DataFrame({
             'Code': ['1'],
+            'Dst Code Name': ['NIGERIA'],
             'New Rate': [0.05],
             'Effective Date': ['2024-01-01'],
             'Status': ['Accepted']
         })
-        df['code'] = df['Code']
-        df['code_name'] = df['Code']
-        df['value'] = df['New Rate']
-        df['effective_from'] = pd.to_datetime(df['Effective Date']).dt.strftime('%Y-%m-%d')
-        result = rate_upload_to_Jera.bulk_import_rates(df, 1, dry_run=True)
+
+        tmp_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp_dir, ignore_errors=True))
+        csv_path = str(tmp_dir / "jera_bulk_import_test.csv")
+
+        result = rate_upload_to_Jera.bulk_import_rates(df, 1, temp_file_path=csv_path, dry_run=False)
         self.assertIn('status', result)
-        self.assertEqual(result['status'], 'dry_run')
+
+        # Verify the actual CSV that would be uploaded contains the correct name
+        exported_df = pd.read_csv(csv_path)
+        self.assertIn("code_name", exported_df.columns)
+        self.assertIn("code", exported_df.columns)
+        self.assertEqual(str(exported_df.loc[0, "code_name"]), "NIGERIA")
+        self.assertEqual(str(exported_df.loc[0, "code"]), "1")
 
     @patch('rate_upload_to_Jera.bulk_import_rates')
     @patch('pandas.read_excel')
