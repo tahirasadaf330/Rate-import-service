@@ -63,15 +63,17 @@ _prefix_in_name_pat = re.compile(r'(?:prefix|prfx)[:\s-]*(\d+)\b', re.I)
 def normalize_prefix(prefix) -> Optional[str]:
     if prefix is None:
         return None
-    try:
-        return str(int(str(prefix).strip()))
-    except Exception:
+    s = str(prefix).strip()
+    if not s:
         return None
+    # Preserve leading zeros: return first digit run as-is.
+    m = re.search(r"\d+", s)
+    return m.group(0) if m else None
 
 def table_prefix_from_name(name: str) -> Optional[str]:
     """Extract numeric prefix from a table name like '... PREFIX:33' or 'PRFX-33'."""
     m = _prefix_in_name_pat.search(name or "")
-    return str(int(m.group(1))) if m else None
+    return (m.group(1) if m else None)
 
 def table_has_prefix(name: str, prefix_code: str) -> bool:
     """True if table name contains the exact prefix number."""

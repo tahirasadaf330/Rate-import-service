@@ -101,7 +101,7 @@ class TestEmailVerification(unittest.TestCase):
         out = email_verification._normalize_output('Comp', 'Trunk', '123', 'USD')
         self.assertEqual(out['company'], 'Comp')
         self.assertEqual(out['trunk'], 'Trunk')
-        self.assertEqual(out['prefix'], 123)
+        self.assertEqual(out['prefix'], '123')  # prefix stored as string
         self.assertEqual(out['currency'], 'USD')
         self.assertIsNone(email_verification._normalize_output('', '', '', ''))
 
@@ -113,12 +113,45 @@ class TestEmailVerification(unittest.TestCase):
         self.assertIsNone(email_verification._extract_anyorder('no currency here'))
 
     def test_validate_subject(self):
-        valid = email_verification.validate_subject('Acme trunk prefix 123 USD')
-        self.assertIsInstance(valid, dict)
+        # Strict 4-bracket subjects are valid
+        v1 = email_verification.validate_subject('[SIGMA] [Gold] [3333] [USD]')
+        self.assertIsInstance(v1, dict)
+        self.assertEqual(v1["company"], "SIGMA")
+        self.assertEqual(v1["trunk"], "Gold")
+        self.assertEqual(v1["prefix"], "3333")
+        self.assertEqual(v1["currency"], "USD")
+
+        # Prefix numeric extraction (preserve leading zeros)
+        v2 = email_verification.validate_subject('[QUICKCOM] [CC] [Prefix 004] [USD]')
+        self.assertIsInstance(v2, dict)
+        self.assertEqual(v2["prefix"], "004")
+
+        # Prefix numeric extraction (suffix allowed)
+        v3 = email_verification.validate_subject('[Asia Access Telecom] [Hayo Telecom IN] [1117#] [USD]')
+        self.assertIsInstance(v3, dict)
+        self.assertEqual(v3["prefix"], "1117")
+
+        # Prefix can be None
+        v4 = email_verification.validate_subject('[World Hub Communications Pte. Ltd.] [Premium] [None] [USD]')
+        self.assertIsInstance(v4, dict)
+        self.assertIsNone(v4["prefix"])
+
+        # Invalid: not in strict bracket format
+        self.assertIsNone(email_verification.validate_subject('Acme trunk prefix 123 USD'))
         self.assertIsNone(email_verification.validate_subject('bad subject'))
 
+        # Invalid: empty brackets
+        self.assertIsNone(email_verification.validate_subject('[ALLIP][][1072][USD]'))
+        self.assertIsNone(email_verification.validate_subject('[ALLIP][ ][1072][USD]'))
+        self.assertIsNone(email_verification.validate_subject('[][CLI][1072][USD]'))
+
+        # Invalid: missing currency / extra trailing text
+        self.assertIsNone(email_verification.validate_subject('[SIGMA] [Gold] [3333]'))
+        self.assertIsNone(email_verification.validate_subject('[SIGMA] [Gold] [3333] [USD] 2025-01-01'))
+
     def test_subject_ok(self):
-        self.assertTrue(email_verification.subject_ok('Acme trunk prefix 123 USD'))
+        self.assertTrue(email_verification.subject_ok('[SIGMA] [Gold] [3333] [USD]'))
+        self.assertFalse(email_verification.subject_ok('Acme trunk prefix 123 USD'))
         self.assertFalse(email_verification.subject_ok('bad subject'))
 
     def test_strip_date_time_tokens_for_invalid_subject(self):

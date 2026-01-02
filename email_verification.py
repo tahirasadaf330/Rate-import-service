@@ -260,6 +260,26 @@ _NO_LABELS = re.compile(r"""
 
 _ANYORDER = re.compile(r"^(?=.*\bprefix\b)(?=.*\b[A-Za-z]{3}\b).*$", re.IGNORECASE)
 
+# Strict subject format required (branch requirement):
+#   [company] [trunk] [prefix] [currency]
+# Rules:
+# - Exactly 4 bracket groups, and nothing else outside them (except whitespace).
+# - No bracket may be empty after trimming (so [] / [ ] invalid).
+# - Prefix: either "None"/"none" OR must contain at least one digit; we extract the first digit-run
+#   and preserve leading zeros (e.g., "Prefix 001" -> "001", "1117#" -> "1117").
+# - Currency must be exactly 3 letters (e.g., USD).
+_STRICT_4_BRACKETS = re.compile(
+    r"""
+    ^\s*
+    \[(?P<company>[^\[\]]+?)\]\s*
+    \[(?P<trunk>[^\[\]]+?)\]\s*
+    \[(?P<prefix>[^\[\]]+?)\]\s*
+    \[(?P<currency>[A-Za-z]{3})\]\s*
+    $
+    """,
+    re.VERBOSE,
+)
+
 def _first_3letter_currency(tokens):
     for t in reversed(tokens):
         if re.fullmatch(r"[A-Za-z]{3}", t):
@@ -267,22 +287,38 @@ def _first_3letter_currency(tokens):
     return None
 
 def _normalize_output(company: str, trunk: str, prefix, currency: str) -> Optional[Dict[str, object]]:
-    company = (company or "").strip(" ._-")
+    """
+    Normalize extracted subject parts.
+    Notes:
+    - company/trunk are preserved (trimmed) because vendor matching uses subject company names.
+    - prefix is stored as:
+        - None (if explicitly "none"/"None")
+        - otherwise the first digit-run string (preserving leading zeros)
+    - currency is normalized to uppercase.
+    """
+    company = (company or "").strip()
     trunk = (trunk or "").strip()
     currency = (currency or "").strip().upper()
     if not company or not trunk or not re.fullmatch(r"[A-Z]{3}", currency):
         return None
+
+    # Normalize prefix
+    if isinstance(prefix, int):
+        prefix = str(prefix)
     if isinstance(prefix, str):
-        if prefix.lower() == "none":
-            prefix = None
-        elif prefix.isdigit():
-            prefix = int(prefix)
-        else:
+        p = prefix.strip()
+        if not p:
             return None
-    elif prefix is not None and not isinstance(prefix, int):
+        if p.lower() == "none":
+            prefix = None
+        else:
+            m = re.search(r"\d+", p)
+            if not m:
+                return None
+            prefix = m.group(0)  # keep leading zeros
+    elif prefix is not None:
         return None
-    if not re.fullmatch(r"[A-Za-z][\w\-]*", trunk):
-        return None
+
     return {"company": company, "trunk": trunk, "prefix": prefix, "currency": currency}
 
 def _extract_anyorder(subject: str) -> Optional[Dict[str, object]]:
@@ -341,25 +377,17 @@ def _extract_anyorder(subject: str) -> Optional[Dict[str, object]]:
 def validate_subject(subject: Optional[str]) -> Optional[Dict[str, object]]:
     if not subject:
         return None
-    s = _normalize_subject(subject)
-    if not s:
+    # Branch requirement: ONLY accept strict 4-bracket subjects.
+    m = _STRICT_4_BRACKETS.match(str(subject).strip())
+    if not m:
         return None
-    for rx in (_FREEFORM, _BRACKETED_LIKE, _NO_LABELS):
-        m = rx.match(s)
-        if m:
-            gd = m.groupdict()
-            return _normalize_output(gd.get("company",""), gd.get("trunk",""), gd.get("prefix",""), gd.get("currency",""))
-    if _ANYORDER.match(s):
-        parsed = _extract_anyorder(s)
-        if parsed:
-            return parsed
-    parts = s.split()
-    if len(parts) >= 4:
-        maybe_currency, maybe_prefix, trunk = parts[-1], parts[-2], parts[-3]
-        if re.fullmatch(r"[A-Za-z]{3}", maybe_currency) and re.fullmatch(r"(?:\d+|none)", maybe_prefix, flags=re.I):
-            company = " ".join(parts[:-3]).strip()
-            return _normalize_output(company, trunk, maybe_prefix, maybe_currency)
-    return None
+    gd = m.groupdict()
+    return _normalize_output(
+        gd.get("company", ""),
+        gd.get("trunk", ""),
+        gd.get("prefix", ""),
+        gd.get("currency", ""),
+    )
 
 def subject_ok(s: Optional[str]) -> bool:
     return validate_subject(s) is not None
