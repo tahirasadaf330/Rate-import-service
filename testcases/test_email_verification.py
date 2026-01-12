@@ -136,7 +136,24 @@ class TestEmailVerification(unittest.TestCase):
         self.assertIsInstance(v4, dict)
         self.assertIsNone(v4["prefix"])
 
+        # Freeform format is also valid:
+        #   "<company words> <trunk> trunk Prefix:1001 USD"
+        v5 = email_verification.validate_subject('Quickcom tel PRM trunk Prefix:1001 USD')
+        self.assertIsInstance(v5, dict)
+        self.assertEqual(v5["company"], "Quickcom tel")
+        self.assertEqual(v5["trunk"], "PRM")
+        self.assertEqual(v5["prefix"], "1001")
+        self.assertEqual(v5["currency"], "USD")
+
+        v6 = email_verification.validate_subject('Quickcom tel PRM trunk Prefix 0007 usd')
+        self.assertIsInstance(v6, dict)
+        self.assertEqual(v6["company"], "Quickcom tel")
+        self.assertEqual(v6["trunk"], "PRM")
+        self.assertEqual(v6["prefix"], "0007")
+        self.assertEqual(v6["currency"], "USD")
+
         # Invalid: not in strict bracket format
+        # (This does NOT match freeform either because it lacks "<TRUNK> trunk" and the prefix/currency framing)
         self.assertIsNone(email_verification.validate_subject('Acme trunk prefix 123 USD'))
         self.assertIsNone(email_verification.validate_subject('bad subject'))
 
@@ -148,9 +165,25 @@ class TestEmailVerification(unittest.TestCase):
         # Invalid: missing currency / extra trailing text
         self.assertIsNone(email_verification.validate_subject('[SIGMA] [Gold] [3333]'))
         self.assertIsNone(email_verification.validate_subject('[SIGMA] [Gold] [3333] [USD] 2025-01-01'))
+        self.assertIsNone(email_verification.validate_subject('Quickcom tel PRM trunk Prefix:1001 USD 2025-01-01'))  # trailing tokens
+        # Freeform: trunk is the token immediately before the keyword "trunk"
+        v7 = email_verification.validate_subject('Quickcom tel trunk Prefix:1001 USD')
+        self.assertIsInstance(v7, dict)
+        self.assertEqual(v7["company"], "Quickcom")
+        self.assertEqual(v7["trunk"], "tel")
+        self.assertEqual(v7["prefix"], "1001")
+        self.assertEqual(v7["currency"], "USD")
+
+        # User-provided invalid subjects (should go to invalid-subject flow)
+        self.assertIsNone(email_verification.validate_subject('PHOENOS_RCN-Hayo,2026-01-10'))
+        self.assertIsNone(email_verification.validate_subject('[ADC][WHS][][USD]'))  # empty prefix bracket
+        self.assertIsNone(email_verification.validate_subject('HAYO:: CLI PARTIAL RATE SHEET || PREFIX 111'))  # no currency and no "trunk" keyword
+        self.assertIsNone(email_verification.validate_subject('A-Z Replacement Request - [RICOCHET][WHL][1771][USD]'))  # extra text outside brackets
+        self.assertIsNone(email_verification.validate_subject('New A-Z rate update from SwissLink for CLI Services SURCHARG...'))
 
     def test_subject_ok(self):
         self.assertTrue(email_verification.subject_ok('[SIGMA] [Gold] [3333] [USD]'))
+        self.assertTrue(email_verification.subject_ok('Quickcom tel PRM trunk Prefix:1001 USD'))
         self.assertFalse(email_verification.subject_ok('Acme trunk prefix 123 USD'))
         self.assertFalse(email_verification.subject_ok('bad subject'))
 

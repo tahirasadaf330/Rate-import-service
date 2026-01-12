@@ -280,6 +280,31 @@ _STRICT_4_BRACKETS = re.compile(
     re.VERBOSE,
 )
 
+# Freeform subject format (allowed as a fallback):
+#   <company words> <TRUNK> trunk Prefix:1234 USD
+#
+# Notes:
+# - We apply this to the *normalized* subject (punctuation collapsed to spaces),
+#   so "Prefix:1001" and "Prefix 1001" both work.
+# - Trunk is the word immediately before the keyword "trunk".
+# - Company is everything before that trunk word.
+# - Prefix is digits after "prefix".
+# - Currency is a 3-letter code at the end.
+_FREEFORM_TRUNK_PREFIX = re.compile(
+    r"""
+    ^\s*
+    (?P<company>.+?)\s+
+    (?P<trunk>[A-Za-z][\w\-]*)\s+
+    trunk\b
+    .*?
+    prefix\b\s*[:\s-]*\s*(?P<prefix>\d+)
+    \s+
+    (?P<currency>[A-Za-z]{3})
+    \s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
 def _first_3letter_currency(tokens):
     for t in reversed(tokens):
         if re.fullmatch(r"[A-Za-z]{3}", t):
@@ -377,16 +402,32 @@ def _extract_anyorder(subject: str) -> Optional[Dict[str, object]]:
 def validate_subject(subject: Optional[str]) -> Optional[Dict[str, object]]:
     if not subject:
         return None
-    # Branch requirement: ONLY accept strict 4-bracket subjects.
-    m = _STRICT_4_BRACKETS.match(str(subject).strip())
-    if not m:
+    raw = str(subject).strip()
+
+    # 1) Preferred: strict 4-bracket subjects.
+    m = _STRICT_4_BRACKETS.match(raw)
+    if m:
+        gd = m.groupdict()
+        return _normalize_output(
+            gd.get("company", ""),
+            gd.get("trunk", ""),
+            gd.get("prefix", ""),
+            gd.get("currency", ""),
+        )
+
+    # 2) Fallback: freeform "<company> <trunk> trunk Prefix:123 USD"
+    s = _normalize_subject(raw)
+    if not s:
         return None
-    gd = m.groupdict()
+    m2 = _FREEFORM_TRUNK_PREFIX.match(s)
+    if not m2:
+        return None
+    gd2 = m2.groupdict()
     return _normalize_output(
-        gd.get("company", ""),
-        gd.get("trunk", ""),
-        gd.get("prefix", ""),
-        gd.get("currency", ""),
+        gd2.get("company", ""),
+        gd2.get("trunk", ""),
+        gd2.get("prefix", ""),
+        gd2.get("currency", ""),
     )
 
 def subject_ok(s: Optional[str]) -> bool:
