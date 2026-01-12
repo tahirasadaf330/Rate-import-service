@@ -9,12 +9,15 @@ class TestJerasoft(unittest.TestCase):
     def test_normalize_prefix(self):
         self.assertEqual(jerasoft.normalize_prefix('1001'), '1001')
         self.assertEqual(jerasoft.normalize_prefix(' 1001 '), '1001')
+        self.assertEqual(jerasoft.normalize_prefix('040'), '040')  # preserve leading zeros
+        self.assertEqual(jerasoft.normalize_prefix('Prefix 040'), '040')
         self.assertEqual(jerasoft.normalize_prefix(None), None)
         self.assertEqual(jerasoft.normalize_prefix('abc'), None)
         self.assertEqual(jerasoft.normalize_prefix(''), None)
 
     def test_table_prefix_from_name(self):
         self.assertEqual(jerasoft.table_prefix_from_name('TERM Quickcom PRM trunk PREFIX:1001 USD'), '1001')
+        self.assertEqual(jerasoft.table_prefix_from_name('TERM Quickcom PRM trunk PREFIX:040 USD'), '040')
         self.assertEqual(jerasoft.table_prefix_from_name('PRFX-33'), '33')
         self.assertIsNone(jerasoft.table_prefix_from_name('NoPrefixHere'))
 
@@ -23,6 +26,7 @@ class TestJerasoft(unittest.TestCase):
         self.assertFalse(jerasoft.table_has_prefix('TERM Quickcom PRM trunk PREFIX:1001 USD', '9999'))
         self.assertTrue(jerasoft.table_has_prefix('PRFX-33', '33'))
         self.assertFalse(jerasoft.table_has_prefix('PRFX-33', '44'))
+        self.assertTrue(jerasoft.table_has_prefix('TERM Quickcom PRM trunk PREFIX:040 USD', '040'))
 
     def test_normalize(self):
         self.assertEqual(jerasoft.normalize('  Foo.Bar  ##'), 'foo bar')
