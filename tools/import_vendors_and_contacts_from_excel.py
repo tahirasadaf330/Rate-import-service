@@ -3,15 +3,22 @@ Import vendors + vendor_contacts from an Excel workbook with multiple sheets.
 
 Expected columns (case-insensitive, trimmed):
   - Company Name
-  - AM contacts
-  - Rates
+  - AM                  (person name)
+  - AM contacts         (vendor AM emails)
+  - Hayo AM             (optional)
+  - INVOICES            (optional)
+  - NOC                 (optional)
+  - Rates               (optional)
 
 Behavior:
   - Reads ALL sheets by default.
   - Upserts vendors by company_name into `vendors`.
-  - Upserts vendor_contacts by email into `vendor_contacts` and assigns role:
-      - "am"   for AM contacts column
-      - "rate" for Rates column
+  - Upserts vendor_contacts by email into `vendor_contacts` and assigns role based on column name:
+      - "am contacts", "rates", "invoices", "noc", "hayo am" (normalized to lowercase)
+  - contact_name policy (per your latest requirement):
+      - role "hayo am": use the AM person name (column "AM")
+      - role "am contacts": use first token of email local-part (before @, split on . _ - space)
+      - other roles ("rates", "invoices", "noc"): blank contact_name (NULL if allowed, else empty string)
   - Prefixes/extra text in the email cells are ignored; we extract valid emails via regex.
 
 Requirements:
@@ -82,11 +89,17 @@ class ContactRow:
     company_name: str
     email: str
     role: str  # "am" | "rate"
+    contact_name: Optional[str] = None
 
 
-def _detect_columns(df: pd.DataFrame) -> Tuple[str, str, str]:
+def _detect_columns(df: pd.DataFrame) -> Tuple[str, str, Dict[str, str]]:
     """
-    Return (company_col, am_col, rate_col).
+    Return:
+      (company_col, am_name_col, role_cols)
+
+    role_cols is a mapping: role_key -> column_name, where role_key is a normalized role label:
+      - "am contacts", "hayo am", "invoices", "noc", "rates"
+
     Raises ValueError if required columns aren't found.
     """
     cols = list(df.columns)
@@ -100,23 +113,45 @@ def _detect_columns(df: pd.DataFrame) -> Tuple[str, str, str]:
     if not company:
         raise ValueError("Missing required column: Company Name")
 
-    am = None
-    for k in ("am contacts", "am contact", "am", "account manager", "account manager contacts"):
+    am_name = None
+    for k in ("am", "account manager", "am name"):
         if k in norm2real:
-            am = norm2real[k]
+            am_name = norm2real[k]
             break
-    if not am:
+    if not am_name:
+        raise ValueError("Missing required column: AM (name)")
+
+    role_cols: Dict[str, str] = {}
+
+    def _pick(*keys: str) -> Optional[str]:
+        for k in keys:
+            if k in norm2real:
+                return norm2real[k]
+        return None
+
+    am_contacts = _pick("am contacts", "am contact", "account manager contacts")
+    if not am_contacts:
         raise ValueError("Missing required column: AM contacts")
+    role_cols["am contacts"] = am_contacts
 
-    rate = None
-    for k in ("rates", "rate", "rates email", "rate email", "rates contacts"):
-        if k in norm2real:
-            rate = norm2real[k]
-            break
-    if not rate:
-        raise ValueError("Missing required column: Rates")
+    # Optional contact columns
+    hayo_am = _pick("hayo am", "hayo_am")
+    if hayo_am:
+        role_cols["hayo am"] = hayo_am
 
-    return company, am, rate
+    invoices = _pick("invoices", "invoice")
+    if invoices:
+        role_cols["invoices"] = invoices
+
+    noc = _pick("noc")
+    if noc:
+        role_cols["noc"] = noc
+
+    rates = _pick("rates", "rate", "rates email", "rate email", "rates contacts")
+    if rates:
+        role_cols["rates"] = rates
+
+    return company, am_name, role_cols
 
 
 def load_rows_from_workbook(xlsx_path: Path, sheet_names: Optional[Sequence[str]] = None) -> Tuple[List[str], List[ContactRow]]:
@@ -138,7 +173,7 @@ def load_rows_from_workbook(xlsx_path: Path, sheet_names: Optional[Sequence[str]
             continue
 
         try:
-            company_col, am_col, rate_col = _detect_columns(df)
+            company_col, am_name_col, role_cols = _detect_columns(df)
         except ValueError as e:
             # Skip sheets that don't have the expected format (but keep going)
             print(f"[SKIP] sheet={sh!r}: {e}")
@@ -153,10 +188,24 @@ def load_rows_from_workbook(xlsx_path: Path, sheet_names: Optional[Sequence[str]
                 vendor_seen.add(company)
                 vendor_names.append(company)
 
-            for email in extract_emails(row.get(am_col)):
-                contacts.append(ContactRow(company_name=company, email=email, role="am"))
-            for email in extract_emails(row.get(rate_col)):
-                contacts.append(ContactRow(company_name=company, email=email, role="rate"))
+            am_person_name = str(row.get(am_name_col, "")).strip() or None
+
+            for role_key, col_name in role_cols.items():
+                for email in extract_emails(row.get(col_name)):
+                    # contact_name rules:
+                    # - "hayo am" => use AM person name
+                    # - "am contacts" => first token of email (handled here)
+                    # - others => blank (None)
+                    if role_key == "hayo am":
+                        cname = am_person_name
+                    elif role_key == "am contacts":
+                        # first word from email local-part
+                        local = (email or "").split("@", 1)[0].strip()
+                        token = re.split(r"[.\s_\-]+", local)[0].strip() if local else ""
+                        cname = token or None
+                    else:
+                        cname = None
+                    contacts.append(ContactRow(company_name=company, email=email, role=role_key, contact_name=cname))
 
     return vendor_names, contacts
 
@@ -176,6 +225,28 @@ def _ensure_tables_exist() -> None:
         raise RuntimeError(f"Missing required tables in DB: {missing}")
 
 
+def _contact_name_nullable() -> bool:
+    """
+    Return True if vendor_contacts.contact_name is nullable in DB schema; else False.
+    If schema can't be checked, default to False (safer).
+    """
+    sql = """
+        SELECT is_nullable
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'vendor_contacts'
+          AND column_name = 'contact_name'
+        LIMIT 1
+    """
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql)
+            row = cur.fetchone()
+        return (row and str(row[0]).strip().upper() == "YES")
+    except Exception:
+        return False
+
+
 def upsert_vendor(company_name: str) -> int:
     sql = """
         INSERT INTO vendors (company_name, created_at, updated_at)
@@ -191,37 +262,28 @@ def upsert_vendor(company_name: str) -> int:
         return int(vid)
 
 
-def upsert_vendor_contact(vendor_id: int, email: str, role: str) -> None:
+def upsert_vendor_contact(vendor_id: int, email: str, role: str, contact_name: Optional[str], *, allow_null_contact_name: bool) -> None:
     sql = """
         INSERT INTO vendor_contacts
           (vendor_id, contact_name, email, role, is_added_to_cc, status, created_at, updated_at)
         VALUES
           (%s, %s, %s, %s, FALSE, TRUE, NOW(), NOW())
-        ON CONFLICT (email) DO UPDATE SET
-          vendor_id = EXCLUDED.vendor_id,
-          role = EXCLUDED.role,
+        ON CONFLICT (vendor_id, email, role) DO UPDATE SET
           contact_name = EXCLUDED.contact_name,
           updated_at = NOW();
     """
 
-    def _contact_name_from_email(addr: str) -> str:
-        """
-        Derive a simple contact_name from an email address:
-          - take the local-part (before @)
-          - split on ., _, -, and whitespace
-          - take the first token
-        Fallback to full email if anything goes wrong.
-        """
-        try:
-            local = (addr or "").split("@", 1)[0].strip()
-            if not local:
-                return addr
-            token = re.split(r"[.\s_\-]+", local)[0].strip()
-            return token or addr
-        except Exception:
-            return addr
+    # contact_name behavior:
+    # - We already computed contact_name upstream based on role rules.
+    # - If DB does not allow NULL and contact_name is None, store empty string.
+    if contact_name is not None:
+        cn = str(contact_name).strip()
+        contact_name = cn or None
 
-    contact_name = _contact_name_from_email(email)
+    if contact_name is None and not allow_null_contact_name:
+        # DB requires NOT NULL -> store empty string for "blank" contact_name roles.
+        contact_name = ""
+
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, (vendor_id, contact_name, email, role))
         conn.commit()
@@ -273,20 +335,34 @@ def main() -> int:
 
     # DB writes
     _ensure_tables_exist()
+    allow_null_contact_name = _contact_name_nullable()
 
     company_to_vid: Dict[str, int] = {}
     for company in vendor_names:
         vid = upsert_vendor(company)
         company_to_vid[company] = vid
 
-    # Upsert contacts (dedupe triplets to avoid redundant DB work)
-    for (company, email, role) in sorted(unique_contacts):
+    # Upsert contacts (dedupe to avoid redundant DB work)
+    # We keep the first contact_name encountered for an email+role+company triplet.
+    unique_contact_rows: Dict[Tuple[str, str, str], Optional[str]] = {}
+    for c in contacts:
+        key = (c.company_name, c.email, c.role)
+        if key not in unique_contact_rows:
+            unique_contact_rows[key] = c.contact_name
+
+    for (company, email, role), cname in sorted(unique_contact_rows.items()):
         vid = company_to_vid.get(company)
         if not vid:
             # should not happen, but be safe
             vid = upsert_vendor(company)
             company_to_vid[company] = vid
-        upsert_vendor_contact(vendor_id=int(vid), email=email, role=role)
+        upsert_vendor_contact(
+            vendor_id=int(vid),
+            email=email,
+            role=role,
+            contact_name=cname,
+            allow_null_contact_name=allow_null_contact_name,
+        )
 
     print(f"[DONE] upserted vendors={len(company_to_vid)} contacts_unique_triplets={len(unique_contacts)}")
     return 0
