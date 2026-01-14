@@ -136,6 +136,14 @@ class TestEmailVerification(unittest.TestCase):
         self.assertIsInstance(v4, dict)
         self.assertIsNone(v4["prefix"])
 
+        # Prefix can also be expressed as "PREFIX NONE" (but not other phrases)
+        v4b = email_verification.validate_subject('[TITAN INTERNATIONAL] [STANDARD] [PREFIX NONE] [USD]')
+        self.assertIsInstance(v4b, dict)
+        self.assertEqual(v4b["company"], "TITAN INTERNATIONAL")
+        self.assertEqual(v4b["trunk"], "STANDARD")
+        self.assertIsNone(v4b["prefix"])
+        self.assertEqual(v4b["currency"], "USD")
+
         # Freeform format is also valid:
         #   "<company words> <trunk> trunk Prefix:1001 USD"
         v5 = email_verification.validate_subject('Quickcom tel PRM trunk Prefix:1001 USD')
