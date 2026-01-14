@@ -866,6 +866,84 @@ class TestRealFileProcessing(unittest.TestCase):
         print(f"📂 Cleaned output at: {output_path}")
         print(f"🔍 Expanded {len(sample_data)} rows to {len(cleaned_df)} rows")
 
+    def test_load_clean_rates_preserves_dst_code_name_when_present(self):
+        """If input contains a destination name column, cleaned output should keep it (vendor files too)."""
+        from preprocess_data import load_clean_rates
+
+        src_path = os.path.join(self.temp_dir, "with_dst_code_name.xlsx")
+        out_path = os.path.join(self.temp_dir, "with_dst_code_name_cleaned.xlsx")
+
+        df = pd.DataFrame({
+            "Dst Code": ["92"],
+            "Dst Code Name": ["NIGERIA"],
+            "Rate": ["0.45"],
+            "Effective Date": ["2026-01-21"],
+            "Billing Increment": ["1/1"],
+        })
+        df.to_excel(src_path, index=False)
+
+        cleaned_df = load_clean_rates(
+            path=src_path,
+            output_path=out_path,
+            sheet=0,
+            date_format_email="AUTO",
+        )
+
+        self.assertIn("Dst Code Name", cleaned_df.columns)
+        self.assertEqual(cleaned_df["Dst Code Name"].iloc[0], "NIGERIA")
+
+    def test_load_clean_rates_maps_destination_to_dst_code_name(self):
+        """If input uses 'Destination' header, canonicalization should map it to 'Dst Code Name'."""
+        from preprocess_data import load_clean_rates
+
+        src_path = os.path.join(self.temp_dir, "with_destination.xlsx")
+        out_path = os.path.join(self.temp_dir, "with_destination_cleaned.xlsx")
+
+        df = pd.DataFrame({
+            "Dst Code": ["43"],
+            "Destination": ["SPAIN"],
+            "Rate": ["0.56"],
+            "Effective Date": ["2026-01-21"],
+            "Billing Increment": ["1/1"],
+        })
+        df.to_excel(src_path, index=False)
+
+        cleaned_df = load_clean_rates(
+            path=src_path,
+            output_path=out_path,
+            sheet=0,
+            date_format_email="AUTO",
+        )
+
+        self.assertIn("Dst Code Name", cleaned_df.columns)
+        self.assertEqual(cleaned_df["Dst Code Name"].iloc[0], "SPAIN")
+
+    def test_load_clean_rates_maps_destination_country_to_dst_code_name(self):
+        """If input uses a combined header like 'Destination/Country', map it to 'Dst Code Name'."""
+        from preprocess_data import load_clean_rates
+
+        src_path = os.path.join(self.temp_dir, "with_destination_country.xlsx")
+        out_path = os.path.join(self.temp_dir, "with_destination_country_cleaned.xlsx")
+
+        df = pd.DataFrame({
+            "Dst Code": ["43"],
+            "Destination/Country": ["SPAIN"],
+            "Rate": ["0.56"],
+            "Effective Date": ["2026-01-21"],
+            "Billing Increment": ["1/1"],
+        })
+        df.to_excel(src_path, index=False)
+
+        cleaned_df = load_clean_rates(
+            path=src_path,
+            output_path=out_path,
+            sheet=0,
+            date_format_email="AUTO",
+        )
+
+        self.assertIn("Dst Code Name", cleaned_df.columns)
+        self.assertEqual(cleaned_df["Dst Code Name"].iloc[0], "SPAIN")
+
 
 # --- Custom file cleaning test ---
 def clean_and_show_file(file_path, date_format='AUTO'):

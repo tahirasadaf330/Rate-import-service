@@ -674,6 +674,25 @@ ALIAS_MAP = {
     'dial_code': 'Dst Code',
     'breakout' : 'Dst Code',
     'country_code': 'Dst Code',
+    # Dst Code Name (destination label)
+    'dst_code_name': 'Dst Code Name',
+    'dstcodename': 'Dst Code Name',
+    'code_name': 'Dst Code Name',
+    'codename': 'Dst Code Name',
+    'destination': 'Dst Code Name',
+    'destinations': 'Dst Code Name',
+    'destination_name': 'Dst Code Name',
+    'dest_name': 'Dst Code Name',
+    'country': 'Dst Code Name',
+    'country_name': 'Dst Code Name',
+    'area_name': 'Dst Code Name',
+    'breakout_name': 'Dst Code Name',
+    'destination_country': 'Dst Code Name',
+    'destination_country_name': 'Dst Code Name',
+    'dest_country': 'Dst Code Name',
+    'dest_country_name': 'Dst Code Name',
+    'dst_name': 'Dst Code Name',
+    'dstname': 'Dst Code Name',
     # Rate
     'rate': 'Rate',
     'rates': 'Rate',
@@ -782,8 +801,23 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
     
     # First pass: collect all potential matches (exact and substring)
     for c in original:
-        # Special cases first
-        if preclean_map[c].lower() == 'dst code name':
+        # Special cases first (explicit destination name columns)
+        pc_l = preclean_map[c].lower()
+        if pc_l in (
+            'dst code name',
+            'code name',
+            'destination',
+            'destinations',
+            'destination name',
+            'country',
+            'country name',
+        ):
+            column_to_canonical[c] = 'Dst Code Name'
+            canonical_to_columns.setdefault('Dst Code Name', []).append(c)
+            continue
+        # Heuristic: map any column that looks like "destination ... name" or "country ... name"
+        # to Dst Code Name. This is intentionally conservative to avoid ambiguity with Dst Code.
+        if ("name" in pc_l) and (("destination" in pc_l) or ("country" in pc_l) or ("dst" in pc_l)):
             column_to_canonical[c] = 'Dst Code Name'
             canonical_to_columns.setdefault('Dst Code Name', []).append(c)
             continue
@@ -1310,9 +1344,9 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     df = _synthesize_billing_increment(df)
     df = trim_after_notes_and_strip_blank_above(df)
 
-    is_js = "jerasoft" in str(path).lower()
     required_cols = list(REQUIRED_COLS)
-    if is_js and "Dst Code Name" not in required_cols:
+    # Preserve Dst Code Name when present for vendor files too (needed for New rows UI/DB/Jera upload).
+    if "Dst Code Name" in df.columns and "Dst Code Name" not in required_cols:
         required_cols = required_cols + ["Dst Code Name"]
 
     df = df[required_cols].copy()

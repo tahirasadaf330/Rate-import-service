@@ -175,7 +175,7 @@ def read_comparison_table(path: Path) -> pd.DataFrame:
     df.dropna(how="all", inplace=True)
     return df
 
-def df_to_detail_dicts(df: pd.DataFrame) -> List[Dict[str, Any]]:
+def df_to_detail_dicts(df: pd.DataFrame, received_at: Optional[datetime] = None) -> List[Dict[str, Any]]:
     details: List[Dict[str, Any]] = []
 
     has_old_bi    = "Old Billing Increment" in df.columns
@@ -186,12 +186,23 @@ def df_to_detail_dicts(df: pd.DataFrame) -> List[Dict[str, Any]]:
         eff = r["Effective Date"]
         eff_py = None if pd.isna(eff) else eff.to_pydatetime()  # tz-aware UTC
 
+        change_type = None if pd.isna(r["Change Type"]) else str(r["Change Type"]).strip()
+        # Ensure Closed rows always have an effective_date for UI/DB:
+        # if missing in the comparison sheet, use the email received_at (DATE ONLY).
+        # Store as UTC midnight so DB/UI show 'YYYY-MM-DD'.
+        if eff_py is None and received_at is not None and isinstance(change_type, str) and change_type.strip().lower() == "closed":
+            try:
+                ra_utc = received_at.astimezone(timezone.utc)
+                eff_py = datetime(ra_utc.year, ra_utc.month, ra_utc.day, tzinfo=timezone.utc)
+            except Exception:
+                eff_py = received_at
+
         item: Dict[str, Any] = {
             "dst_code": None if pd.isna(r["Code"]) else str(r["Code"]).strip(),
             "rate_existing": None if pd.isna(r["Old Rate"]) else float(r["Old Rate"]),
             "rate_new": None if pd.isna(r["New Rate"]) else float(r["New Rate"]),
             "effective_date": eff_py,
-            "change_type": None if pd.isna(r["Change Type"]) else str(r["Change Type"]).strip(),
+            "change_type": change_type,
             "status": None if pd.isna(r["Status"]) else str(r["Status"]).strip(),
             "notes": None if pd.isna(r["Notes"]) else str(r["Notes"]).strip(),
         }
@@ -833,7 +844,7 @@ def process_one_folder(folder: Path) -> str:
             except Exception:
                 pass
 
-            details = df_to_detail_dicts(df)
+            details = df_to_detail_dicts(df, received_at=received_at)
             if not details:  # list truthiness is fine
                 rp[f.name] = "no rows extracted to push"
                 print(f"[{folder.name}]    ⚠ no detail rows extracted; nothing to push")  # >>> ADDED

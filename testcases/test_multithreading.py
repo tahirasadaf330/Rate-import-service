@@ -124,6 +124,16 @@ class TestMultithreading(unittest.TestCase):
         self.assertIsInstance(details, list)
         self.assertEqual(details[0]["dst_code"], "1001")
 
+    def test_df_to_detail_dicts_closed_effective_date_falls_back_to_received_at(self):
+        df = pd.DataFrame({
+            "Code": ["1002"], "Old Rate": [0.06], "New Rate": [np.nan],
+            "Effective Date": [pd.NaT], "Status": ["Rejected"], "Change Type": ["Closed"], "Notes": [""]
+        })
+        received_at = datetime(2026, 1, 14, tzinfo=timezone.utc)
+        details = df_to_detail_dicts(df, received_at=received_at)
+        self.assertEqual(details[0]["change_type"], "Closed")
+        self.assertEqual(details[0]["effective_date"], datetime(2026, 1, 14, tzinfo=timezone.utc))
+
     def test_compute_upload_stats(self):
         df = pd.DataFrame({
             "Code": ["1001", "1002"], "Old Rate": [0.05, 0.06], "New Rate": [0.07, 0.06],
