@@ -27,9 +27,24 @@ class TestRateUploadService(unittest.TestCase):
         mock_cursor.rowcount = 1
         mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
         mock_get_conn.return_value.__enter__.return_value = mock_conn
+        # On success: jera_upload_result should be NULL/None (we store nothing on success)
         rate_upload_service.update_bulk_upload_status(1, 'completed', {'result': 'ok'})
+        args1 = mock_cursor.execute.call_args_list[-1][0][1]
+        self.assertEqual(args1[0], 'completed')
+        self.assertIsNone(args1[1])
+
+        # On failure: jera_upload_result should be valid JSON string
         rate_upload_service.update_bulk_upload_status(1, 'failed', {'error': 'fail'})
+        args2 = mock_cursor.execute.call_args_list[-1][0][1]
+        self.assertEqual(args2[0], 'failed')
+        self.assertIsInstance(args2[1], str)
+        self.assertIn('"error"', args2[1])
+
+        # On processing: jera_upload_result should be NULL/None
         rate_upload_service.update_bulk_upload_status(1, 'processing')
+        args3 = mock_cursor.execute.call_args_list[-1][0][1]
+        self.assertEqual(args3[0], 'processing')
+        self.assertIsNone(args3[1])
 
     @patch('rate_upload_service.get_conn')
     def test_verify_upload_status(self, mock_get_conn):
@@ -56,6 +71,35 @@ class TestRateUploadService(unittest.TestCase):
         result = rate_upload_service.process_bulk_upload(upload, dry_run=True)
         self.assertTrue(result)
         self.assertTrue(mock_export.called)
+
+    @patch('rate_upload_service.bulk_upload_df_to_jerasoft')
+    @patch('rate_upload_service.fetch_rate_upload_details_for_upload')
+    @patch('rate_upload_service.update_bulk_upload_status')
+    @patch('rate_upload_service.export_db_upload_dataframe')
+    def test_process_bulk_upload_closed_rows_are_sent_as_close_keyword(self, mock_export, mock_update, mock_fetch, mock_bulk):
+        # DB rows include a Closed row (Accepted) with a numeric rate_new; service should convert it to "close"
+        mock_fetch.return_value = [
+            {"dst_code": "43", "code_name": "AUSTRIA", "rate_new": None, "effective_date": "2026-01-15", "new_billing_increment": "1/1",
+             "status": "Accepted", "change_type": "Closed", "notes": "present in current but missing in new"},
+        ]
+        mock_bulk.return_value = {'status': 'success', 'filtered_rows': 1, 'files_id': 'fileid123'}
+
+        upload = {
+            'id': 1, 'jera_table_id': 4330, 'subject': 'subject', 'sender_email': 'sender',
+            'total_rows': 1, 'comparison_file_path': 'file.xlsx'
+        }
+        ok = rate_upload_service.process_bulk_upload(upload, dry_run=True)
+        self.assertTrue(ok)
+
+        # Verify the DF passed to bulk_upload_df_to_jerasoft has "close" keyword + Changes column
+        passed_df = mock_bulk.call_args.kwargs["df"]
+        self.assertIn("New Rate", passed_df.columns)
+        self.assertIn("Changes", passed_df.columns)
+        self.assertIn("Change Type", passed_df.columns)
+
+        closed_row = passed_df[passed_df["Change Type"].astype(str).str.lower().eq("closed")].iloc[0]
+        self.assertEqual(str(closed_row["New Rate"]).strip().lower(), "close")
+        self.assertEqual(str(closed_row["Changes"]).strip().lower(), "close")
 
     @patch('rate_upload_service.bulk_upload_df_to_jerasoft')
     @patch('rate_upload_service.fetch_rate_upload_details_for_upload')

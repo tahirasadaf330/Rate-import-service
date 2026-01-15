@@ -86,14 +86,22 @@ def get_pending_bulk_uploads() -> List[Dict[str, Any]]:
 def update_bulk_upload_status(upload_id: int, status: str, result: Dict[str, Any] = None):
     """Update the upload status and result."""
     
-    # Only store error messages as string when status is failed, otherwise null
+    # `rate_uploads.jera_upload_result` is JSON/JSONB in many DBs.
+    # Requirement: when upload is successful, store NOTHING (NULL) in jera_upload_result.
+    # We only persist details on failures.
+    import json as _json
+    payload = None
+    if status == "failed" and result is not None:
+        payload = result if isinstance(result, dict) else {"result": str(result)}
+    jera_result_json = None if payload is None else _json.dumps(payload)
+    
+    # For console logging only
     error_message = None
-    if status == 'failed' and result:
-        if isinstance(result, dict):
-            # Extract error message from result dict
-            error_message = result.get('error', str(result))
+    if status == 'failed' and payload is not None:
+        if isinstance(payload, dict):
+            error_message = payload.get('error', str(payload))
         else:
-            error_message = str(result)
+            error_message = str(payload)
     
     sql = """
         UPDATE rate_uploads SET
@@ -106,7 +114,7 @@ def update_bulk_upload_status(upload_id: int, status: str, result: Dict[str, Any
     
     try:
         with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(sql, (status, error_message, status, upload_id))
+            cur.execute(sql, (status, jera_result_json, status, upload_id))
             rows_affected = cur.rowcount
             conn.commit()
             
@@ -200,6 +208,18 @@ def process_bulk_upload(upload: Dict[str, Any], dry_run: bool = False) -> bool:
             "change_type": "Change Type",
         }
         df = df.rename(columns=rename)
+
+        # JeraSoft "Closed keywords" support:
+        # If a row is marked Closed, send the keyword "close" in the import file so Jera will close it.
+        # (Jera recognizes closed keywords in the Rate and Changes columns per JeraSoft docs.)
+        if "Change Type" in df.columns and "New Rate" in df.columns:
+            closed_mask = df["Change Type"].astype(str).str.strip().str.lower().eq("closed")
+            if closed_mask.any():
+                df.loc[closed_mask, "New Rate"] = "close"
+                # Provide an explicit Changes column too (some Jera imports use it for keyword handling)
+                if "Changes" not in df.columns:
+                    df["Changes"] = None
+                df.loc[closed_mask, "Changes"] = "close"
 
         # Write an audit copy of what we are about to upload (DB-built sheet)
         try:
