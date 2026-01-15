@@ -13,7 +13,8 @@ Expected columns (case-insensitive, trimmed):
 Behavior:
   - Reads ALL sheets by default.
   - Upserts vendors by company_name into `vendors`.
-  - Upserts vendor_contacts by email into `vendor_contacts` and assigns role based on column name:
+  - Upserts vendor_contacts by (vendor_id, email) into `vendor_contacts` and assigns a single role per email per company
+    (no duplicates within the same company; if the same email appears under multiple role columns, we keep the highest-priority role).
       - "am contacts", "rates", "invoices", "noc", "hayo am" (normalized to lowercase)
   - contact_name policy (per your latest requirement):
       - role "hayo am": use the AM person name (column "AM")
@@ -25,7 +26,8 @@ Requirements:
   - DB env vars set (.env): DB_HOST, DB_PORT, DB_DATABASE, DB_USERNAME, DB_PASSWORD
   - Tables exist:
       vendors(company_name UNIQUE, ...)
-      vendor_contacts(email UNIQUE, vendor_id FK, contact_name NOT NULL, role, ...)
+      vendor_contacts(vendor_id FK, email, role, contact_name, ...)
+      and a UNIQUE constraint on (vendor_id, email)
 
 Usage:
   Dry-run (no DB writes):
@@ -90,6 +92,26 @@ class ContactRow:
     email: str
     role: str  # "am" | "rate"
     contact_name: Optional[str] = None
+
+
+ROLE_PRIORITY: Dict[str, int] = {
+    # Higher wins (keep only one role per (company,email))
+    "hayo am": 50,
+    "am contacts": 40,
+    "rates": 30,
+    "invoices": 20,
+    "noc": 10,
+}
+
+
+def _pick_best_role(existing_role: Optional[str], new_role: str) -> str:
+    if not existing_role:
+        return new_role
+    er = str(existing_role).strip().lower()
+    nr = str(new_role).strip().lower()
+    if ROLE_PRIORITY.get(nr, 0) > ROLE_PRIORITY.get(er, 0):
+        return new_role
+    return existing_role
 
 
 def _detect_columns(df: pd.DataFrame) -> Tuple[str, str, Dict[str, str]]:
@@ -268,7 +290,8 @@ def upsert_vendor_contact(vendor_id: int, email: str, role: str, contact_name: O
           (vendor_id, contact_name, email, role, is_added_to_cc, status, created_at, updated_at)
         VALUES
           (%s, %s, %s, %s, FALSE, TRUE, NOW(), NOW())
-        ON CONFLICT (vendor_id, email, role) DO UPDATE SET
+        ON CONFLICT (vendor_id, email) DO UPDATE SET
+          role = EXCLUDED.role,
           contact_name = EXCLUDED.contact_name,
           updated_at = NOW();
     """
@@ -313,11 +336,11 @@ def main() -> int:
     vendor_names, contacts = load_rows_from_workbook(xlsx_path, sheet_names=args.sheet)
 
     # Basic parsing summary
-    unique_contacts = {(c.company_name, c.email, c.role) for c in contacts}
+    unique_contacts = {(c.company_name, c.email) for c in contacts}
     unique_emails = {c.email for c in contacts}
     print(f"[OK] mode={mode} file={xlsx_path.name!r}")
     print(f"[OK] vendors found: {len(vendor_names)}")
-    print(f"[OK] contacts found: {len(contacts)} (unique triplets={len(unique_contacts)} unique_emails={len(unique_emails)})")
+    print(f"[OK] contacts found: {len(contacts)} (unique company+email={len(unique_contacts)} unique_emails={len(unique_emails)})")
 
     # Detect email reused across companies/roles
     email_to_companies: Dict[str, set] = {}
@@ -343,14 +366,21 @@ def main() -> int:
         company_to_vid[company] = vid
 
     # Upsert contacts (dedupe to avoid redundant DB work)
-    # We keep the first contact_name encountered for an email+role+company triplet.
-    unique_contact_rows: Dict[Tuple[str, str, str], Optional[str]] = {}
+    # Keep ONE row per (company,email). If multiple roles exist, keep the highest-priority role.
+    unique_contact_rows: Dict[Tuple[str, str], Tuple[str, Optional[str]]] = {}
     for c in contacts:
-        key = (c.company_name, c.email, c.role)
+        key = (c.company_name, c.email)
         if key not in unique_contact_rows:
-            unique_contact_rows[key] = c.contact_name
+            unique_contact_rows[key] = (c.role, c.contact_name)
+            continue
+        existing_role, existing_name = unique_contact_rows[key]
+        best_role = _pick_best_role(existing_role, c.role)
+        if best_role == existing_role:
+            continue
+        # role changed -> update contact_name to the best role's contact_name
+        unique_contact_rows[key] = (best_role, c.contact_name)
 
-    for (company, email, role), cname in sorted(unique_contact_rows.items()):
+    for (company, email), (role, cname) in sorted(unique_contact_rows.items()):
         vid = company_to_vid.get(company)
         if not vid:
             # should not happen, but be safe
@@ -364,7 +394,7 @@ def main() -> int:
             allow_null_contact_name=allow_null_contact_name,
         )
 
-    print(f"[DONE] upserted vendors={len(company_to_vid)} contacts_unique_triplets={len(unique_contacts)}")
+    print(f"[DONE] upserted vendors={len(company_to_vid)} contacts_unique_company_email={len(unique_contacts)}")
     return 0
 
 
