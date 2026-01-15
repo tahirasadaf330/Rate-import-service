@@ -334,7 +334,9 @@ def _normalize_output(company: str, trunk: str, prefix, currency: str) -> Option
         p = prefix.strip()
         if not p:
             return None
-        if p.lower() == "none":
+        # Allow only "NONE" or "PREFIX NONE" (case-insensitive) to mean None.
+        # Do NOT accept other phrases like "no prefix".
+        if p.lower() == "none" or re.fullmatch(r"prefix\s+none", p, flags=re.IGNORECASE):
             prefix = None
         else:
             m = re.search(r"\d+", p)
