@@ -493,9 +493,9 @@ def fetch_rate_upload_details_for_upload(
     where_status = ""
     params: list[Any] = [rate_upload_id]
     if statuses:
-        # Case-insensitive status match (so Accepted/accepted/ACCEPTED all work)
-        where_status = "AND LOWER(COALESCE(status,'')) = ANY(%s)"
-        params.append([str(s).strip().lower() for s in statuses if str(s).strip()])
+        # Case-sensitive match (only exact statuses like "Accepted" are included)
+        where_status = "AND status = ANY(%s)"
+        params.append([str(s).strip() for s in statuses if str(s).strip()])
 
     sql = f"""
         SELECT
