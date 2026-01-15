@@ -801,15 +801,13 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
             'destination',
             'destinations',
             'destination name',
-            'country',
-            'country name',
         ):
             column_to_canonical[c] = 'Dst Code Name'
             canonical_to_columns.setdefault('Dst Code Name', []).append(c)
             continue
-        # Heuristic: map any column that looks like "destination ... name" or "country ... name"
+        # Heuristic: map any column that looks like "destination ... name"
         # to Dst Code Name. This is intentionally conservative to avoid ambiguity with Dst Code.
-        if ("name" in pc_l) and (("destination" in pc_l) or ("country" in pc_l) or ("dst" in pc_l)):
+        if ("name" in pc_l) and (("destination" in pc_l) or ("dst" in pc_l)):
             column_to_canonical[c] = 'Dst Code Name'
             canonical_to_columns.setdefault('Dst Code Name', []).append(c)
             continue
