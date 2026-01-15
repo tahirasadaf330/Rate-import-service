@@ -297,6 +297,7 @@ def bulk_import_rates(df: pd.DataFrame, table_id: int,
                 "tag": "@",
                 "time_profiles_id": "1"
             }],
+            # We'll overwrite this list dynamically below based on what we export.
             "columns": ["code_name", "code", "value", "effective_from"],
             "skip_rows_bottom": "0",
             "skip_rows_top": "0", 
@@ -330,16 +331,30 @@ def bulk_import_rates(df: pd.DataFrame, table_id: int,
             jera_df['code_name'] = jera_df['Code']  # fallback
     if 'New Rate' in jera_df.columns:
         jera_df['value'] = jera_df['New Rate']
+    # Optional "Changes" column (used for blocked/closed keywords in Jera import UI)
+    if 'Changes' in jera_df.columns:
+        jera_df['changes'] = jera_df['Changes']
+    elif 'Change Type' in jera_df.columns:
+        # For Closed rows, explicitly send the closed keyword to the Changes column too.
+        ct = jera_df['Change Type'].astype(str).str.strip()
+        jera_df['changes'] = ct.where(~ct.str.lower().eq("closed"), other="close")
     if 'Effective Date' in jera_df.columns:
         jera_df['effective_from'] = pd.to_datetime(jera_df['Effective Date']).dt.strftime('%Y-%m-%d')
     
     # Select only required columns for JeraSoft
     required_cols = ['code_name', 'code', 'value', 'effective_from']
+    if 'changes' in jera_df.columns:
+        required_cols.append('changes')
     missing_cols = [col for col in required_cols if col not in jera_df.columns]
     if missing_cols:
         raise ValueError(f"Missing required columns after mapping: {missing_cols}")
     
     export_df = jera_df[required_cols]
+    # Make sure the import settings column list matches what we export
+    try:
+        default_settings["sheets"][0]["columns"] = list(required_cols)
+    except Exception:
+        pass
     
     if dry_run:
         print("🧪 DRY RUN - Preview of data to be uploaded:")
