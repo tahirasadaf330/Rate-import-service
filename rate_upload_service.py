@@ -22,11 +22,81 @@ from typing import List, Dict, Any
 from dotenv import load_dotenv
 from database import get_conn
 from database import fetch_rate_upload_details_for_upload
-from rate_upload_to_Jera import bulk_upload_df_to_jerasoft
+from rate_upload_to_Jera import (
+    bulk_upload_df_to_jerasoft,
+    stash_rates_df_to_jerasoft,
+    stash_future_rates_df_to_jerasoft,
+    wait_for_imported_rates_visible,
+)
 import pandas as pd
+import json
+import re
+import tempfile
 
 # Load environment
 load_dotenv()
+
+def _read_metadata_if_present(comparison_file_path: str | None) -> Dict[str, Any] | None:
+    """
+    Best-effort: load attachments/<folder>/metadata.json (if present).
+    """
+    cfp = (comparison_file_path or "").strip()
+    if not cfp:
+        return None
+    try:
+        folder = Path(cfp).parent
+        meta_path = folder / "metadata.json"
+        if not meta_path.exists():
+            return None
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        return meta if isinstance(meta, dict) else None
+    except Exception:
+        return None
+
+def _pick_vendor_received_filename(comparison_file_path: str | None) -> str | None:
+    """
+    Get the vendor's received attachment filename from metadata.json.
+    Prefer non-jerasoft_comparison files.
+    """
+    meta = _read_metadata_if_present(comparison_file_path)
+    if not meta:
+        return None
+    atts = meta.get("attachments")
+    if isinstance(atts, list):
+        for a in atts:
+            if not isinstance(a, str):
+                continue
+            n = a.lower()
+            if "jerasoft_comparison" in n:
+                continue
+            if a.strip():
+                return a.strip()
+        for a in atts:
+            if isinstance(a, str) and a.strip():
+                return a.strip()
+    return None
+
+def _safe_stem(filename: str, *, max_len: int = 120) -> str:
+    stem = Path(filename).stem
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-")
+    return (stem or "vendor_file")[:max_len]
+
+def _pick_temp_csv_path_from_vendor_filename(vendor_filename: str) -> str:
+    """
+    Build a temp CSV path whose basename is just the vendor filename stem:
+      HAYOTEL-PREMIUM_A-Z-RN_01-13-2026.csv
+    If it exists, add _v2/_v3/... to avoid collisions.
+    """
+    safe = _safe_stem(vendor_filename, max_len=120)
+    tmp = Path(tempfile.gettempdir())
+    base = tmp / f"{safe}.csv"
+    if not base.exists():
+        return str(base)
+    for i in range(2, 51):
+        alt = tmp / f"{safe}_v{i}.csv"
+        if not alt.exists():
+            return str(alt)
+    return str(tmp / f"{safe}_{int(time.time())}.csv")
 
 def export_db_upload_dataframe(
     df: pd.DataFrame,
@@ -209,17 +279,21 @@ def process_bulk_upload(upload: Dict[str, Any], dry_run: bool = False) -> bool:
         }
         df = df.rename(columns=rename)
 
+        # Split out "Stashed" rows: these should be applied via API (rates.update(status="stashed"))
+        # so they show as stashed/inactive in Jera UI.
+        stashed_df = pd.DataFrame()
+        if "Change Type" in df.columns:
+            stashed_mask = df["Change Type"].astype(str).str.strip().str.lower().eq("stashed")
+            if stashed_mask.any():
+                stashed_df = df.loc[stashed_mask].copy()
+                df = df.loc[~stashed_mask].copy()
+
         # JeraSoft "Closed keywords" support:
-        # If a row is marked Closed, send the keyword "close" in the import file so Jera will close it.
-        # (Jera recognizes closed keywords in the Rate and Changes columns per JeraSoft docs.)
+        # If a row is marked Closed, send the keyword "close" in the Rate (New Rate/value) column so Jera will close it.
         if "Change Type" in df.columns and "New Rate" in df.columns:
             closed_mask = df["Change Type"].astype(str).str.strip().str.lower().eq("closed")
             if closed_mask.any():
                 df.loc[closed_mask, "New Rate"] = "close"
-                # Provide an explicit Changes column too (some Jera imports use it for keyword handling)
-                if "Changes" not in df.columns:
-                    df["Changes"] = None
-                df.loc[closed_mask, "Changes"] = "close"
 
         # Write an audit copy of what we are about to upload (DB-built sheet)
         try:
@@ -236,15 +310,112 @@ def process_bulk_upload(upload: Dict[str, Any], dry_run: bool = False) -> bool:
         if not dry_run:
             update_bulk_upload_status(upload_id, 'processing')
         
-        # Perform bulk upload
+        # 1) Perform bulk upload (normal + close-keyword rows)
+        # Use vendor filename as the uploaded CSV name so Jera Import History shows it.
+        temp_csv_path = None
+        vendor_file = _pick_vendor_received_filename(str(comparison_file_path) if comparison_file_path else None)
+        if vendor_file:
+            temp_csv_path = _pick_temp_csv_path_from_vendor_filename(vendor_file)
+
+        # If you want JeraSoft Import History to show "A-Z Stashed" like manual imports,
+        # create an import template in JeraSoft with "Stash Future Rates" enabled and set:
+        #   JERASOFT_IMPORT_TEMPLATE_ID=<id>
+        import_template_id = os.getenv("JERASOFT_IMPORT_TEMPLATE_ID", "").strip()
+        import_template_id_int = int(import_template_id) if import_template_id.isdigit() else None
+
         result = bulk_upload_df_to_jerasoft(
             df=df,
             table_id=table_id,
             accepted_statuses=accepted_statuses,
+            import_templates_id=import_template_id_int,
+            temp_file_path=temp_csv_path,
             dry_run=dry_run,
         )
+
+        # 1a) Wait for import job to actually apply before doing any post-import API updates.
+        # JeraSoft import is async; if we stash too early, the import can overwrite status back to "active".
+        if not dry_run and isinstance(result, dict) and result.get("status") == "success":
+            enable_wait = os.getenv("JERASOFT_WAIT_IMPORT_APPLY", "1").strip() not in ("0", "false", "False", "no", "NO")
+            if enable_wait:
+                try:
+                    # Use the same "imported_df" filtering as bulk_upload_df_to_jerasoft
+                    _wait_df = df.copy()
+                    if accepted_statuses and "Status" in _wait_df.columns:
+                        _wait_df["Status"] = _wait_df["Status"].astype(str).str.strip()
+                        _wait_df = _wait_df[_wait_df["Status"].isin(accepted_statuses)]
+                    _wait_df = _wait_df[_wait_df["Code"].astype(str).str.strip().ne("")]
+                    _wait_df = _wait_df[_wait_df["New Rate"].notna()]
+                    _wait_df = _wait_df[_wait_df["Effective Date"].notna()]
+                    if not _wait_df.empty:
+                        wait_res = wait_for_imported_rates_visible(_wait_df, int(table_id))
+                        print(f"⏳ Import visibility wait: {wait_res}")
+                        result = {**result, "import_wait": wait_res}
+                except Exception as e:
+                    print(f"⚠️ Import wait failed (continuing): {e}")
+
+        # 1b) Optional: "Stash Future Rates" behavior (like Jera UI option)
+        # After importing a rate, stash any later ACTIVE rates for the same code in the same table.
+        # This is useful for "rescheduled/backdated" scenarios where a new earlier effective date
+        # should make already-scheduled future rates inactive (stashed) in Jera UI.
+        enable_stash_future = os.getenv("JERASOFT_ENABLE_STASH_FUTURE_RATES", "1").strip() not in ("0", "false", "False", "no", "NO")
+        if enable_stash_future and isinstance(result, dict) and result.get("status") == "success":
+            try:
+                imported_df = df.copy()
+                # Match bulk_upload_df_to_jerasoft filtering
+                if accepted_statuses and "Status" in imported_df.columns:
+                    imported_df["Status"] = imported_df["Status"].astype(str).str.strip()
+                    imported_df = imported_df[imported_df["Status"].isin(accepted_statuses)]
+                # Skip "Closed" rows: those are handled via close keyword, not future-stashing.
+                if "Change Type" in imported_df.columns:
+                    ct = imported_df["Change Type"].astype(str).str.strip().str.lower()
+                    imported_df = imported_df[~ct.eq("closed")]
+                # Drop invalids (same as uploader)
+                imported_df = imported_df[imported_df["Code"].astype(str).str.strip().ne("")]
+                imported_df = imported_df[imported_df["New Rate"].notna()]
+                imported_df = imported_df[imported_df["Effective Date"].notna()]
+                if not imported_df.empty:
+                    print(f"🧊 Stashing future rates for {len(imported_df)} imported row(s) in JeraSoft...")
+                    future_stash_result = stash_future_rates_df_to_jerasoft(imported_df, int(table_id), dry_run=dry_run)
+                    print(f"🧊 Future-stash result: {future_stash_result}")
+                    result = {**result, "future_stashed": future_stash_result}
+            except Exception as e:
+                print(f"⚠️ Failed to apply future-stash behavior: {e}")
+
+        # 2) Apply stashed rows via API
+        stash_result: Dict[str, Any] = {"status": "skipped", "reason": "no_stashed_rows"}
+        if stashed_df is not None and not stashed_df.empty:
+            enable_stash_api = os.getenv("JERASOFT_ENABLE_STASH_API", "1").strip() not in ("0", "false", "False", "no", "NO")
+            if enable_stash_api:
+                print(f"🧊 Applying {len(stashed_df)} Stashed rows in JeraSoft...")
+                stash_result = stash_rates_df_to_jerasoft(stashed_df, int(table_id), dry_run=dry_run)
+                print(f"🧊 Stash result: {stash_result}")
+                result = {**result, "stashed": stash_result}
+            else:
+                print(f"🧊 Skipping stashed API updates (JERASOFT_ENABLE_STASH_API=0).")
+                stash_result = {"status": "skipped", "reason": "stash_api_disabled", "rows": int(len(stashed_df))}
+                result = {**result, "stashed": stash_result}
         
-        if result.get('status') == 'success':
+        # Overall success rules:
+        # - Normal case: bulk import succeeded.
+        # - Stash-only case: bulk import returns "skipped/no_accepted_rates" BUT stashing succeeded.
+        bulk_ok = result.get("status") == "success"
+        stash_ok = True
+        if stashed_df is not None and not stashed_df.empty:
+            stash_ok = (
+                isinstance(stash_result, dict)
+                and stash_result.get("status") == "success"
+                and int(stash_result.get("not_found", 0)) == 0
+                and not stash_result.get("errors")
+            )
+        only_stash_ok = (
+            (not bulk_ok)
+            and result.get("status") == "skipped"
+            and result.get("reason") == "no_accepted_rates"
+            and (stashed_df is not None and not stashed_df.empty)
+            and stash_ok
+        )
+
+        if bulk_ok or only_stash_ok:
             print(f"✅ Bulk upload completed successfully!")
             print(f"   Rows uploaded: {result.get('filtered_rows', 0)}")
             print(f"   Files ID: {result.get('files_id', 'N/A')}")

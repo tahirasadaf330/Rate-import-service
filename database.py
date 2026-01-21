@@ -372,6 +372,7 @@ def insert_rate_upload(
         "decrease": 0,
         "unchanged": 0,
         "closed": 0,
+        "stashed": 0,
         "backdated_increase": 0,
         "backdated_decrease": 0,
         "billing_increment_changes": 0,
@@ -382,12 +383,12 @@ def insert_rate_upload(
     sql = """
         INSERT INTO rate_uploads
         (subject, sender_email, received_at, processed_at,
-         total_rows, "new", increase, decrease, unchanged, closed,
+         total_rows, "new", increase, decrease, unchanged, closed, stashed,
          backdated_increase, backdated_decrease, billing_increment_changes,
          jera_table_id, comparison_file_path, created_at, updated_at)
         VALUES
         (%s, %s, COALESCE(%s, NOW()), %s,
-         %s, %s, %s, %s, %s, %s,
+         %s, %s, %s, %s, %s, %s, %s,
          %s, %s, %s, %s, %s,
          NOW(), NOW())
         RETURNING id;
@@ -407,6 +408,7 @@ def insert_rate_upload(
                 t["decrease"],
                 t["unchanged"],
                 t["closed"],
+                t["stashed"],
                 t["backdated_increase"],
                 t["backdated_decrease"],
                 t["billing_increment_changes"],

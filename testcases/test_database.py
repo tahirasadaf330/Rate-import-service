@@ -147,21 +147,24 @@ class TestDatabaseModule(unittest.TestCase):
         # Invalid email formats
         insert_authorized_senders(['not-an-email', ''])
 
-@patch('database.get_conn')
-def test_insert_rejected_email_cases(self, mock_get_conn):
-    from database import insert_rejected_email
-    mock_conn = MagicMock()
-    mock_cursor = MagicMock()
-    mock_get_conn.return_value.__enter__.return_value = mock_conn
-    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-    # Simulate no duplicate found
-    mock_cursor.fetchone.return_value = None
-    # Use an authorized sender email from VERIFIED_SENDERS
-    result = insert_rejected_email('rates@saifglobal.net', 'subj', 'cat', 'notes', None, None)
-    self.assertEqual(result, 1)
-    # Test missing category (should return 1, not None)
-    result = insert_rejected_email('rates@saifglobal.net', 'subj', None, 'notes', None, None)
-    self.assertEqual(result, 1)
+    @patch('valid_emails.get_verified_senders', return_value=['rates@saifglobal.net'])
+    @patch('database.get_conn')
+    def test_insert_rejected_email_cases(self, mock_get_conn, mock_get_verified):
+        from database import insert_rejected_email
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_get_conn.return_value.__enter__.return_value = mock_conn
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        # Simulate no duplicate found
+        mock_cursor.fetchone.return_value = None
+        # Simulate insert returning id
+        mock_cursor.fetchone.return_value = [1]
+        # Use an authorized sender email from VERIFIED_SENDERS
+        result = insert_rejected_email('rates@saifglobal.net', 'subj', 'cat', 'notes', None, None)
+        self.assertEqual(result, 1)
+        # Test missing category (should return 1, not None)
+        result = insert_rejected_email('rates@saifglobal.net', 'subj', None, 'notes', None, None)
+        self.assertEqual(result, 1)
 
     @patch('database.execute_values')
     @patch('database.get_conn')
@@ -198,22 +201,6 @@ def test_insert_rejected_email_cases(self, mock_get_conn):
         # Permission error (simulate by passing directory)
         with self.assertRaises(Exception):
             _atomic_write_json(Path('/'), {'a': 1})
-
-    @patch('database.get_conn')
-    def test_insert_rejected_email_cases(self, mock_get_conn):
-        from database import insert_rejected_email
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_get_conn.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        # Simulate no duplicate found
-        mock_cursor.fetchone.return_value = None
-        # Use an authorized sender email from VERIFIED_SENDERS
-        result = insert_rejected_email('rates@saifglobal.net', 'subj', 'cat', 'notes', None, None)
-        self.assertEqual(result, 1)
-        # Test missing category (should return 1, not None)
-        result = insert_rejected_email('rates@saifglobal.net', 'subj', None, 'notes', None, None)
-        self.assertEqual(result, 1)
 
     @patch('database.get_conn')
     def test_push_failed_emails_json_to_db_cases(self, mock_get_conn):

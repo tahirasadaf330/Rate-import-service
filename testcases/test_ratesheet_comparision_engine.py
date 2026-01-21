@@ -291,6 +291,47 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
                 found = True
         self.assertTrue(found, f"No 'Unchanged' key variant found in stats: {stats}")
 
+        # If effective date moved earlier (new < old), create a Stashed row for the old rate
+        # (per updated requirement), even if the rate is unchanged.
+        left = pd.DataFrame({
+            COL_CODE: ['1001'],
+            COL_RATE: [0.05],
+            COL_EDATE: [datetime(2026, 2, 12)],
+            COL_BI: ['1/60'],
+            COL_NAME: ['A']
+        })
+        right = pd.DataFrame({
+            COL_CODE: ['1001'],
+            COL_RATE: [0.05],  # same rate
+            COL_EDATE: [datetime(2026, 1, 12)],  # earlier effective date
+            COL_BI: ['1/60'],
+            COL_NAME: ['A']
+        })
+        result, stats = compare(left, right, as_of_date='2026-01-01', notice_days=7, rate_tol=0.0)
+        self.assertIn('Stashed', result['Change Type'].values)
+        self.assertIn('Unchanged', result['Change Type'].values)
+
+        # Stashed (rate changed + new date earlier): old effective date > new effective date AND rate changed
+        left = pd.DataFrame({
+            COL_CODE: ['1001'],
+            COL_RATE: [0.05],
+            COL_EDATE: [datetime(2026, 2, 12)],
+            COL_BI: ['1/60'],
+            COL_NAME: ['A']
+        })
+        right = pd.DataFrame({
+            COL_CODE: ['1001'],
+            COL_RATE: [0.06],  # rate changed
+            COL_EDATE: [datetime(2026, 1, 12)],  # earlier effective date
+            COL_BI: ['1/60'],
+            COL_NAME: ['A']
+        })
+        result, stats = compare(left, right, as_of_date='2026-01-01', notice_days=7, rate_tol=0.0)
+        self.assertIn('Stashed', result['Change Type'].values)
+        # New vendor row should still be classified by normal logic (Increase/Decrease/etc),
+        # not a special "Rescheduled" type.
+        self.assertNotIn('Rescheduled', result['Change Type'].values)
+
         # Increase
         left = pd.DataFrame({
             COL_CODE: ['1001'],

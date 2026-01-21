@@ -228,6 +228,7 @@ def compute_upload_stats(dfs: List[pd.DataFrame]) -> Dict[str, int]:
         return {
             "total_rows": 0,
             "new": 0, "increase": 0, "decrease": 0, "unchanged": 0, "closed": 0,
+            "stashed": 0,
             "backdated_increase": 0, "backdated_decrease": 0,
             "billing_increment_changes": 0,
         }
@@ -238,6 +239,7 @@ def compute_upload_stats(dfs: List[pd.DataFrame]) -> Dict[str, int]:
     is_new      = _has_ct(df, "New")
     is_closed   = _has_ct(df, "Closed")
     is_unchanged= _has_ct(df, "Unchanged")
+    is_stashed  = _has_ct(df, "Stashed")
 
     is_back_inc = _has_ct(df, "Backdated Increase")
     is_back_dec = _has_ct(df, "Backdated Decrease")
@@ -266,6 +268,7 @@ def compute_upload_stats(dfs: List[pd.DataFrame]) -> Dict[str, int]:
         "decrease":          int(is_dec.sum()),
         "unchanged":         int(is_unchanged.sum()),
         "closed":            int(is_closed.sum()),
+        "stashed":           int(is_stashed.sum()),
         "backdated_increase":int(is_back_inc.sum()),
         "backdated_decrease":int(is_back_dec.sum()),
         "billing_increment_changes": bic,
