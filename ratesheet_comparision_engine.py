@@ -13,7 +13,8 @@ OUT_COLS = [
     "Code", "Dst Code Name",
     "Old Rate", "New Rate",
     "Old Billing Increment", "New Billing Increment",  
-    "Effective Date", "Status", "Change Type", "Notes"
+    "Effective Date",
+    "Status", "Change Type", "Notes"
 ]
 
 
@@ -118,6 +119,7 @@ CHANGE_TYPES = {
     "decrease": "Decrease",
     "unchanged": "Unchanged",
     "closed": "Closed",
+    "stashed": "Stashed",
     "backdated_increase": "Backdated Increase",
     "backdated_decrease": "Backdated Decrease",
     "billing_increment_changes": "Billing Increments Changes",
@@ -131,8 +133,12 @@ def summarize_changes(df: pd.DataFrame) -> dict:
     }
 
 def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], notice_days: int, rate_tol: float) -> pd.DataFrame:
-    left_dedup = keep_latest_per_code(left)
-    right_dedup = keep_latest_per_code(right)
+    # Keep originals for stash logic (Jera extract can contain multiple future rates per code).
+    left_all = left.copy()
+    right_all = right.copy()
+
+    left_dedup = keep_latest_per_code(left_all)
+    right_dedup = keep_latest_per_code(right_all)
 
     merged = left_dedup.merge(right_dedup, on=COL_CODE, how="outer", suffixes=("_old", "_new"), indicator=True)
 
@@ -156,8 +162,41 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
         code = r[COL_CODE]
         o_rate = r.get(f"{COL_RATE}_old", np.nan)
         n_rate = r.get(f"{COL_RATE}_new", np.nan)
+        o_date = r.get(f"{COL_EDATE}_old", pd.NaT)
         n_date = r.get(f"{COL_EDATE}_new", pd.NaT)
         notes: List[str] = []
+
+        # For stash detection, use the earliest NEW effective date for the code (if multiple vendor rows exist).
+        # `keep_latest_per_code()` selects the latest new date, which can hide earlier "rescheduled" entries.
+        n_date_for_stash = n_date
+        try:
+            if isinstance(code, str) and code.strip():
+                n_cand = right_all[right_all[COL_CODE].astype(str).str.strip().eq(str(code).strip())].copy()
+                n_cand = n_cand[pd.notna(n_cand[COL_EDATE])]
+                if not n_cand.empty:
+                    n_date_for_stash = n_cand[COL_EDATE].min()
+        except Exception:
+            n_date_for_stash = n_date
+
+        # Stash condition (updated requirement):
+        # If there exists an OLD future rate whose effective date is later than the NEW effective date,
+        # create a "Stashed" row for that old future rate (pick the nearest future old date).
+        # This must look at ALL old rows for the code (not just keep_latest_per_code) because Jera can
+        # have multiple future scheduled rates per destination.
+        old_future_row = None
+        if bool(both[i]) and isinstance(code, str) and code.strip() and pd.notna(n_date_for_stash):
+            try:
+                cand = left_all[left_all[COL_CODE].astype(str).str.strip().eq(str(code).strip())].copy()
+                cand = cand[pd.notna(cand[COL_EDATE])]
+                cand = cand[cand[COL_EDATE] > n_date_for_stash]
+                if not cand.empty:
+                    # pick the nearest future old effective date
+                    cand = cand.sort_values(by=[COL_EDATE], kind="mergesort")
+                    old_future_row = cand.iloc[0]
+            except Exception:
+                old_future_row = None
+
+        stash_case = old_future_row is not None
 
         #########################
         # ading the code name col
@@ -185,6 +224,39 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
         bi_new = _clean_bi(bi_new)
 
         ########################
+
+        # Stashed scenario:
+        # If the old rate has a later effective date than the new rate for the same code,
+        # AND the rate changed, add an extra row for the old one marked "Stashed".
+        # The NEW vendor row will still be classified via the normal Increase/Decrease logic below.
+        if stash_case:
+            # Override the "old" fields with the nearest-future old row we are going to stash.
+            try:
+                o_rate = old_future_row.get(COL_RATE, o_rate)
+                o_date = old_future_row.get(COL_EDATE, o_date)
+                bi_old = _clean_bi(old_future_row.get(COL_BI, bi_old))
+                # Prefer code name from the stashed old row if present
+                try:
+                    ofn = old_future_row.get(COL_NAME)
+                    if isinstance(ofn, str) and ofn.strip():
+                        dst_name = ofn.strip()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            rows.append({
+                "Code": code,
+                "Dst Code Name": dst_name,
+                "Old Rate": o_rate,
+                "New Rate": np.nan,
+                "Old Billing Increment": bi_old,
+                "New Billing Increment": np.nan,
+                "Effective Date": o_date,         # the rate that should be stashed
+                # Default to Rejected: require manual approval before stashing in JeraSoft.
+                "Status": "Rejected",
+                "Change Type": "Stashed",
+                "Notes": f"old effective {pd.to_datetime(o_date).strftime('%Y-%m-%d')} stashed by new effective {pd.to_datetime(n_date_for_stash).strftime('%Y-%m-%d')}",
+            })
 
         if right_only[i]:
             print(" → Detected as NEW")
@@ -286,7 +358,7 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
                 else:
                     change_type = "Unchanged"
                     status = "Ignored"
-                    notes.append(f"no change identified")
+                    notes.append("no change identified")
             else:
                 print(" → Cannot compare rates (invalid data)")
                 change_type = "Increase"
@@ -297,6 +369,12 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
             status = "Rejected"
             notes.extend(left_reasons)
             notes.extend(right_reasons)
+
+        # In the stash scenario, require manual approval for the *replacement/new* row.
+        # (We already emit a separate "Stashed" row for the old future rate.)
+        if stash_case and str(change_type).strip().lower() != "unchanged":
+            status = "Rejected"
+            notes.append("requires manual approval (replaces future-dated rate)")
 
         rows.append({"Code": code, "Dst Code Name": dst_name, "Old Rate": o_rate, "New Rate": n_rate, "Old Billing Increment": bi_old, "New Billing Increment": bi_new, "Effective Date": n_date, "Status": status, "Change Type": change_type, "Notes": "; ".join(dict.fromkeys(notes))})
 

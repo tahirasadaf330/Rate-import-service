@@ -25,6 +25,7 @@ from unittest.mock import patch
 from pathlib import Path
 from datetime import datetime, timezone
 import pandas as pd
+import numpy as np
 from multithreading import (
     load_metadata, save_metadata, cleaned_out_path, find_jerasoft_file, vendor_files,
     as_of_from_metadata, read_comparison_table, df_to_detail_dicts, compute_upload_stats,

@@ -32,7 +32,9 @@ import os
 import json
 import requests
 import tempfile
+import time
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Environment variables for JeraSoft configuration
 J_API_URL = os.getenv("JERASOFT_API_URL", "http://billing.voipsystem.org:3080") 
@@ -48,8 +50,33 @@ _session_push = requests.Session()
 _session_push.mount("http://", HTTPAdapter(max_retries=Retry(total=4, backoff_factor=0.4, status_forcelist=[502,503,504])))
 _session_push.mount("https://", HTTPAdapter(max_retries=Retry(total=4, backoff_factor=0.4, status_forcelist=[502,503,504])))
 
+def _ensure_env_loaded() -> None:
+    """
+    Make sure .env is loaded and module-level Jera env vars are populated.
+    This prevents 'Missing env var' issues when running scripts directly.
+    """
+    global J_API_URL, J_WEB_URL, J_API_KEY, J_WEB_LOGIN, J_WEB_PASSWORD
+    try:
+        load_dotenv()
+    except Exception:
+        pass
+    # refresh values (only if empty) so imports don't have to be reloaded
+    J_API_URL = J_API_URL or os.getenv("JERASOFT_API_URL", "http://billing.voipsystem.org:3080")
+    J_WEB_URL = J_WEB_URL or os.getenv("JERASOFT_WEB_URL", "https://billing.voipsystem.org:443")
+    J_API_KEY = J_API_KEY or os.getenv("JERA_SOFT_API_KEY")
+    J_WEB_LOGIN = J_WEB_LOGIN or os.getenv("JERASOFT_WEB_LOGIN")
+    J_WEB_PASSWORD = J_WEB_PASSWORD or os.getenv("JERASOFT_WEB_PASSWORD")
+
 def _rpc_call(method: str, params: Dict, api_url: Optional[str] = None) -> Dict:
     """Low-level JSON-RPC helper."""
+    _ensure_env_loaded()
+    # Many calls pass AUTH at construction time; if the module was imported before .env
+    # was loaded, AUTH may be None. Fix it here centrally.
+    try:
+        if isinstance(params, dict) and ("AUTH" in params) and (not params.get("AUTH")) and J_API_KEY:
+            params["AUTH"] = J_API_KEY
+    except Exception:
+        pass
     api_url = api_url or J_API_URL
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     r = _session_push.post(api_url, headers={"Content-Type":"application/json","Accept":"application/json"}, json=payload, timeout=300)
@@ -78,6 +105,12 @@ def _fmt_date(d: object) -> Optional[str]:
         d = d.strip()
         if not d:
             return None
+        # JeraSoft returns strings like:
+        #   '2026-01-23 00:00:00+0000'
+        # We only want the date part to match DB values like '2026-01-23'.
+        m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", d)
+        if m:
+            return m.group(1)
         try:
             return str(pd.to_datetime(d, errors="coerce").date())
         except Exception:
@@ -114,6 +147,249 @@ def _search_rate_id(table_id: int, code: str, effective_from: str, api_url: Opti
         rid = res[0].get("id")
         return int(rid) if rid is not None else None
     return None
+
+
+def _search_rate_id_exact(table_id: int, code: str, effective_from: str, api_url: Optional[str] = None) -> Optional[tuple[Optional[int], str]]:
+    """
+    Like _search_rate_id but STRICT: returns (rate_id, found_status) or (None, "").
+    """
+    api_url = api_url or J_API_URL
+    # Normalize to date-only string to avoid mismatches like:
+    #  - "2026-01-25" vs "2026-01-25 00:00:00" vs "2026-01-25T00:00:00"
+    eff_want = _fmt_date(effective_from)
+    if not eff_want:
+        return None
+    for st in ("active", "stashed"):
+        params = {
+            "AUTH": J_API_KEY,
+            "rate_tables_id": table_id,
+            "code": code,
+            "status": st,
+            "limit": 200,
+            "offset": 0,
+        }
+        res = _rpc_call("rates.search", params, api_url=api_url)
+        if isinstance(res, list) and res:
+            for rate in res:
+                eff_got = _fmt_date(rate.get("effective_from"))
+                if eff_got and eff_got == eff_want:
+                    rid = rate.get("id")
+                    return (int(rid) if rid is not None else None, st)
+    return (None, "")
+
+
+def stash_rates_df_to_jerasoft(df: pd.DataFrame, table_id: int, *, dry_run: bool = False) -> Dict[str, object]:
+    """
+    For each row in df, stash (mark inactive) the ACTIVE rate in JeraSoft matching:
+      - code
+      - effective_from (must match exactly)
+    """
+    if df is None or getattr(df, "empty", True):
+        return {"status": "skipped", "reason": "no_stashed_rows"}
+    _ensure_env_loaded()
+    if not J_API_KEY:
+        return {"status": "error", "error": "Missing JERA_SOFT_API_KEY"}
+
+    df = df.copy()
+    if "Code" not in df.columns or "Effective Date" not in df.columns:
+        return {"status": "error", "error": "missing Code/Effective Date columns"}
+
+    ok = 0
+    already = 0
+    not_found = 0
+    not_found_examples: List[Dict[str, str]] = []
+    errors: List[Dict[str, str]] = []
+
+    for _, r in df.iterrows():
+        code = str(r.get("Code") or "").strip()
+        eff = _fmt_date(r.get("Effective Date"))
+        if not code or not eff:
+            continue
+        try:
+            rid, found_status = _search_rate_id_exact(int(table_id), code, eff)
+            if rid is None:
+                not_found += 1
+                if len(not_found_examples) < 10:
+                    not_found_examples.append({"code": code, "effective_from": str(eff)})
+                continue
+            if found_status == "stashed":
+                already += 1
+                continue
+            if not dry_run:
+                _update_rate(int(rid), status="stashed")
+            ok += 1
+        except Exception as e:
+            errors.append({"code": code, "effective_from": str(eff), "error": str(e)})
+
+    return {
+        "status": "success" if not errors else "partial",
+        "stashed": int(ok),
+        "already_stashed": int(already),
+        "not_found": int(not_found),
+        "not_found_examples": not_found_examples,
+        "errors": errors,
+    }
+
+
+def stash_future_rates_df_to_jerasoft(df: pd.DataFrame, table_id: int, *, dry_run: bool = False) -> Dict[str, object]:
+    """
+    Implements the common JeraSoft UI behavior "Stash Future Rates":
+    for each (code, effective_from) row in df, find ACTIVE rates for that code
+    with effective_from > imported effective_from and set those to status="stashed".
+
+    Notes:
+    - JeraSoft rates.search doesn't support effective_from filtering, so we fetch and filter client-side.
+    - We only search status="active" so "already stashed" is not expected (but still handled defensively).
+    """
+    if df is None or getattr(df, "empty", True):
+        return {"status": "skipped", "reason": "no_rows"}
+    _ensure_env_loaded()
+    if not J_API_KEY:
+        return {"status": "error", "error": "Missing JERA_SOFT_API_KEY"}
+
+    df = df.copy()
+    if "Code" not in df.columns or "Effective Date" not in df.columns:
+        return {"status": "error", "error": "missing Code/Effective Date columns"}
+
+    stashed = 0
+    already = 0
+    scanned = 0
+    errors: List[Dict[str, str]] = []
+
+    def _iter_rates_active_for_code(code: str) -> List[Dict]:
+        out: List[Dict] = []
+        offset = 0
+        limit = 200
+        for _ in range(0, 50):  # hard cap: 10k rows per code
+            params = {
+                "AUTH": J_API_KEY,
+                "rate_tables_id": int(table_id),
+                "code": str(code),
+                "status": "active",
+                "limit": int(limit),
+                "offset": int(offset),
+            }
+            res = _rpc_call("rates.search", params)
+            if not isinstance(res, list) or not res:
+                break
+            out.extend(res)
+            if len(res) < limit:
+                break
+            offset += limit
+        return out
+
+    for _, r in df.iterrows():
+        code = str(r.get("Code") or "").strip()
+        eff_s = _fmt_date(r.get("Effective Date"))
+        if not code or not eff_s:
+            continue
+        try:
+            eff_dt = pd.to_datetime(eff_s, errors="coerce")
+            if pd.isna(eff_dt):
+                continue
+            eff_date = eff_dt.date()
+        except Exception:
+            continue
+
+        try:
+            rates = _iter_rates_active_for_code(code)
+            for rate in rates:
+                rid = rate.get("id")
+                eff_got_s = _fmt_date(rate.get("effective_from"))
+                if rid is None or not eff_got_s:
+                    continue
+                try:
+                    eff_got_dt = pd.to_datetime(eff_got_s, errors="coerce")
+                    if pd.isna(eff_got_dt):
+                        continue
+                    eff_got = eff_got_dt.date()
+                except Exception:
+                    continue
+                scanned += 1
+                if eff_got > eff_date:
+                    if not dry_run:
+                        _update_rate(int(rid), status="stashed")
+                    stashed += 1
+        except Exception as e:
+            errors.append({"code": code, "effective_from": str(eff_s), "error": str(e)})
+
+    return {
+        "status": "success" if not errors else "partial",
+        "stashed": int(stashed),
+        "already_stashed": int(already),
+        "scanned_rates": int(scanned),
+        "errors": errors,
+    }
+
+
+def wait_for_imported_rates_visible(
+    df: pd.DataFrame,
+    table_id: int,
+    *,
+    timeout_sec: int = 90,
+    poll_interval_sec: float = 2.5,
+    min_found: Optional[int] = None,
+) -> Dict[str, object]:
+    """
+    After rates.imports.enqueue, the import job applies asynchronously.
+    To avoid racing (e.g. stashing being overwritten by the import), this helper waits until
+    imported (code,effective_from) pairs are visible in JeraSoft.
+
+    We consider the import "visible" when at least `min_found` pairs are found. If not provided,
+    we default to min(3, total_pairs) but at least 1.
+    """
+    if df is None or getattr(df, "empty", True):
+        return {"status": "skipped", "reason": "no_rows"}
+    _ensure_env_loaded()
+    if not J_API_KEY:
+        return {"status": "error", "error": "Missing JERA_SOFT_API_KEY"}
+    if "Code" not in df.columns or "Effective Date" not in df.columns:
+        return {"status": "error", "error": "missing Code/Effective Date columns"}
+
+    pairs: List[Tuple[str, str]] = []
+    for _, r in df.iterrows():
+        code = str(r.get("Code") or "").strip()
+        eff = _fmt_date(r.get("Effective Date"))
+        if code and eff:
+            pairs.append((code, eff))
+    # de-dupe pairs to reduce API calls
+    pairs = list(dict.fromkeys(pairs))
+    total = len(pairs)
+    if total == 0:
+        return {"status": "skipped", "reason": "no_valid_pairs"}
+
+    need = int(min_found) if isinstance(min_found, int) and min_found > 0 else max(1, min(3, total))
+    start = time.time()
+    found = 0
+
+    while True:
+        found = 0
+        for code, eff in pairs:
+            rid, _st = _search_rate_id_exact(int(table_id), code, eff)
+            if rid is not None:
+                found += 1
+            if found >= need:
+                break
+
+        if found >= need:
+            return {
+                "status": "ready",
+                "found": int(found),
+                "need": int(need),
+                "total_pairs": int(total),
+                "waited_sec": float(round(time.time() - start, 3)),
+            }
+
+        if (time.time() - start) >= float(timeout_sec):
+            return {
+                "status": "timeout",
+                "found": int(found),
+                "need": int(need),
+                "total_pairs": int(total),
+                "waited_sec": float(round(time.time() - start, 3)),
+            }
+
+        time.sleep(float(poll_interval_sec))
 
 def _create_rate(table_id: int, code: str, value: float, eff: str,
                  min_vol: Optional[int], pay_int: Optional[int],
@@ -283,9 +559,13 @@ def bulk_import_rates(df: pd.DataFrame, table_id: int,
         "sheets": [{
             "code_rules": [{
                 "effective_from_interval_type": "days",
-                "effective_from_interval_value": "",
-                "end_date_interval_type": "days", 
-                "end_date_interval_value": "",
+                # Important: some JeraSoft builds treat empty interval as "1 day" (shifts effective_from).
+                # We want to import the effective_from exactly as provided in the CSV.
+                "effective_from_interval_value": "0",
+                # Do NOT set any end_date interval fields. Some JeraSoft builds:
+                # - reject blank end_date_interval_type (validation error),
+                # - or auto-populate End Date when intervals are present.
+                # Omitting these keys entirely avoids both behaviors.
                 "grace_volume": "0",
                 "min_volume": "1",
                 "notes": "",
@@ -331,20 +611,13 @@ def bulk_import_rates(df: pd.DataFrame, table_id: int,
             jera_df['code_name'] = jera_df['Code']  # fallback
     if 'New Rate' in jera_df.columns:
         jera_df['value'] = jera_df['New Rate']
-    # Optional "Changes" column (used for blocked/closed keywords in Jera import UI)
-    if 'Changes' in jera_df.columns:
-        jera_df['changes'] = jera_df['Changes']
-    elif 'Change Type' in jera_df.columns:
-        # For Closed rows, explicitly send the closed keyword to the Changes column too.
-        ct = jera_df['Change Type'].astype(str).str.strip()
-        jera_df['changes'] = ct.where(~ct.str.lower().eq("closed"), other="close")
+    # NOTE: We intentionally do NOT export a 'changes' column to JeraSoft.
+    # Closed handling is done via the 'value' column using the keyword "close".
     if 'Effective Date' in jera_df.columns:
         jera_df['effective_from'] = pd.to_datetime(jera_df['Effective Date']).dt.strftime('%Y-%m-%d')
     
     # Select only required columns for JeraSoft
     required_cols = ['code_name', 'code', 'value', 'effective_from']
-    if 'changes' in jera_df.columns:
-        required_cols.append('changes')
     missing_cols = [col for col in required_cols if col not in jera_df.columns]
     if missing_cols:
         raise ValueError(f"Missing required columns after mapping: {missing_cols}")
@@ -395,7 +668,7 @@ def bulk_import_rates(df: pd.DataFrame, table_id: int,
         
         # Use either template or settings
         if import_templates_id:
-            enqueue_params["import_templates_id"] = import_templates_id
+            enqueue_params["import_templates_id"] = int(import_templates_id)
         else:
             enqueue_params["settings"] = default_settings
         
@@ -573,9 +846,15 @@ def bulk_upload_comparison_to_jerasoft(comparison_file_path: str, table_id: int,
         }
 
 
-def bulk_upload_df_to_jerasoft(df: pd.DataFrame, table_id: int,
-                              accepted_statuses: Tuple[str, ...] = ("Accepted",),
-                              dry_run: bool = False) -> Dict:
+def bulk_upload_df_to_jerasoft(
+    df: pd.DataFrame,
+    table_id: int,
+    accepted_statuses: Tuple[str, ...] = ("Accepted",),
+    *,
+    import_templates_id: Optional[int] = None,
+    temp_file_path: Optional[str] = None,
+    dry_run: bool = False,
+) -> Dict:
     """
     Bulk upload using an in-memory DataFrame (e.g., rows fetched from DB).
 
@@ -610,7 +889,13 @@ def bulk_upload_df_to_jerasoft(df: pd.DataFrame, table_id: int,
         return {"status": "skipped", "reason": "no_valid_rows", "original_rows": 0}
 
     try:
-        result = bulk_import_rates(df, table_id, dry_run=dry_run)
+        result = bulk_import_rates(
+            df,
+            table_id,
+            import_templates_id=import_templates_id,
+            temp_file_path=temp_file_path,
+            dry_run=dry_run,
+        )
         result["filtered_rows"] = len(df)
         result["upload_method"] = "bulk_db_rows"
         print(f"✅ Bulk upload completed! Status: {result.get('status')}")
