@@ -14,7 +14,6 @@ OUT_COLS = [
     "Old Rate", "New Rate",
     "Old Billing Increment", "New Billing Increment",  
     "Effective Date",
-    "New Effective Date",  # only used for Stashed rows (the new date that caused the stash)
     "Status", "Change Type", "Notes"
 ]
 
@@ -253,7 +252,6 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
                 "Old Billing Increment": bi_old,
                 "New Billing Increment": np.nan,
                 "Effective Date": o_date,         # the rate that should be stashed
-                "New Effective Date": n_date_for_stash,     # the new earlier date that caused the stash
                 # Default to Rejected: require manual approval before stashing in JeraSoft.
                 "Status": "Rejected",
                 "Change Type": "Stashed",
@@ -271,12 +269,12 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
                 print(f"   Validation failed: {reasons}")
                 status = "Rejected"
                 notes.extend(reasons)
-            rows.append({"Code": code, "Dst Code Name": dst_name, "Old Rate": o_rate, "New Rate": n_rate, "Old Billing Increment": bi_old, "New Billing Increment": bi_new, "Effective Date": n_date, "New Effective Date": pd.NaT, "Status": status, "Change Type": change_type, "Notes": "; ".join(dict.fromkeys(notes))})
+            rows.append({"Code": code, "Dst Code Name": dst_name, "Old Rate": o_rate, "New Rate": n_rate, "Old Billing Increment": bi_old, "New Billing Increment": bi_new, "Effective Date": n_date, "Status": status, "Change Type": change_type, "Notes": "; ".join(dict.fromkeys(notes))})
             continue
 
         if left_only[i]:
             print(" → Detected as CLOSED")
-            rows.append({"Code": code, "Dst Code Name": dst_name, "Old Rate": o_rate, "New Rate": n_rate,  "Old Billing Increment": bi_old, "New Billing Increment": bi_new, "Effective Date": n_date, "New Effective Date": pd.NaT, "Status": "Rejected", "Change Type": "Closed", "Notes": "present in current system but missing in new (closed)"})
+            rows.append({"Code": code, "Dst Code Name": dst_name, "Old Rate": o_rate, "New Rate": n_rate,  "Old Billing Increment": bi_old, "New Billing Increment": bi_new, "Effective Date": n_date, "Status": "Rejected", "Change Type": "Closed", "Notes": "present in current system but missing in new (closed)"})
             continue
 
         left_reasons = validate_row(pd.Series({COL_CODE: r[COL_CODE], COL_RATE: o_rate, COL_EDATE: r.get(f"{COL_EDATE}_old", pd.NaT), COL_BI: r.get(f"{COL_BI}_old", "")}))
@@ -378,7 +376,7 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
             status = "Rejected"
             notes.append("requires manual approval (replaces future-dated rate)")
 
-        rows.append({"Code": code, "Dst Code Name": dst_name, "Old Rate": o_rate, "New Rate": n_rate, "Old Billing Increment": bi_old, "New Billing Increment": bi_new, "Effective Date": n_date, "New Effective Date": pd.NaT, "Status": status, "Change Type": change_type, "Notes": "; ".join(dict.fromkeys(notes))})
+        rows.append({"Code": code, "Dst Code Name": dst_name, "Old Rate": o_rate, "New Rate": n_rate, "Old Billing Increment": bi_old, "New Billing Increment": bi_new, "Effective Date": n_date, "Status": status, "Change Type": change_type, "Notes": "; ".join(dict.fromkeys(notes))})
 
     out = pd.DataFrame(rows, columns=OUT_COLS)
     if not out.empty:
