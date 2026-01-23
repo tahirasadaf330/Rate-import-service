@@ -221,6 +221,23 @@ class TestMultithreading(unittest.TestCase):
         self.assertIn("skip DB push", msg)
         self.assertEqual(seen.get("date_format_email"), "MM-DD-YYYY")
 
+    def test_compare_skipped_when_preprocessing_failed(self):
+        # If preprocessing failed (final_ok=False), comparison should not run.
+        meta = load_metadata(self.test_dir)
+        meta.pop("comparision_result", None)  # ensure compare stage would run
+        meta["final_ok"] = False
+        meta["jerasoft_preprocessed"] = True
+        meta["date_verification_ingestion_status"] = True
+        save_metadata(self.test_dir, meta)
+
+        msg = process_one_folder(self.test_dir)
+        self.assertIn("skip compare: preprocessing failed", msg)
+        meta2 = load_metadata(self.test_dir)
+        self.assertEqual(
+            (meta2.get("comparision_result") or {}).get("result"),
+            "comparison skipped: preprocessing failed (final_ok=false)",
+        )
+
     def test_run_pipeline_mt(self):
         # Should print no folders to process
         run_pipeline_mt(str(self.test_dir), max_workers=2)

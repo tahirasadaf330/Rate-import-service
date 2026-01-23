@@ -132,7 +132,15 @@ def summarize_changes(df: pd.DataFrame) -> dict:
         **{key: int((ct == label).sum()) for key, label in CHANGE_TYPES.items()},
     }
 
-def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], notice_days: int, rate_tol: float) -> pd.DataFrame:
+def compare(
+    left: pd.DataFrame,
+    right: pd.DataFrame,
+    as_of_date: Optional[str],
+    notice_days: int,
+    rate_tol: float,
+    *,
+    progress_every: int = 0,
+) -> pd.DataFrame:
     # Keep originals for stash logic (Jera extract can contain multiple future rates per code).
     left_all = left.copy()
     right_all = right.copy()
@@ -156,9 +164,44 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
     can_compare_rate = both & old_rate.notna() & new_rate.notna()
     bi_changed = both & (merged[f"{COL_BI}_old"].astype(str).str.strip() != merged[f"{COL_BI}_new"].astype(str).str.strip())
 
-    print(f"▶ Starting compare: {len(merged)} merged rows")
+    # -----------------------------
+    # Precompute stash candidates (vectorized) to avoid per-row dataframe scans
+    # -----------------------------
+    stashed_old_row_by_code: dict[str, pd.Series] = {}
+    right_min_date_by_code: dict[str, pd.Timestamp] = {}
+    try:
+        # earliest NEW effective date per code (use all vendor rows)
+        right_min_date = (
+            right_all[[COL_CODE, COL_EDATE]]
+            .dropna(subset=[COL_EDATE])
+            .assign(**{COL_CODE: right_all[COL_CODE].astype(str).str.strip()})
+            .groupby(COL_CODE, dropna=False)[COL_EDATE]
+            .min()
+        )
+        right_min_date_by_code = {str(k): v for k, v in right_min_date.items()}
+
+        # old rows with effective date later than earliest NEW date => stash candidate
+        left_future = (
+            left_all.dropna(subset=[COL_EDATE])
+            .assign(**{COL_CODE: left_all[COL_CODE].astype(str).str.strip()})
+            [[COL_CODE, COL_RATE, COL_EDATE, COL_BI] + ([COL_NAME] if COL_NAME in left_all.columns else [])]
+        )
+        right_min_df = right_min_date.reset_index().rename(columns={COL_EDATE: "n_min"})
+        cand = left_future.merge(right_min_df, on=COL_CODE, how="inner")
+        cand = cand[cand[COL_EDATE] > cand["n_min"]]
+        if not cand.empty:
+            cand = cand.sort_values(by=[COL_CODE, COL_EDATE], kind="mergesort")
+            cand = cand.groupby(COL_CODE, as_index=False).head(1)
+            stashed_old_row_by_code = {str(row[COL_CODE]): row for _, row in cand.iterrows()}
+    except Exception:
+        stashed_old_row_by_code = {}
+        right_min_date_by_code = {}
+
+    print(f"▶ Starting compare: {len(merged)} merged rows (progress_every={progress_every or 'off'})")
 
     for i, r in merged.iterrows():
+        if progress_every and i and (int(i) % int(progress_every) == 0):
+            print(f"  ... compared {i}/{len(merged)} merged rows")
         code = r[COL_CODE]
         o_rate = r.get(f"{COL_RATE}_old", np.nan)
         n_rate = r.get(f"{COL_RATE}_new", np.nan)
@@ -166,37 +209,11 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
         n_date = r.get(f"{COL_EDATE}_new", pd.NaT)
         notes: List[str] = []
 
-        # For stash detection, use the earliest NEW effective date for the code (if multiple vendor rows exist).
-        # `keep_latest_per_code()` selects the latest new date, which can hide earlier "rescheduled" entries.
-        n_date_for_stash = n_date
-        try:
-            if isinstance(code, str) and code.strip():
-                n_cand = right_all[right_all[COL_CODE].astype(str).str.strip().eq(str(code).strip())].copy()
-                n_cand = n_cand[pd.notna(n_cand[COL_EDATE])]
-                if not n_cand.empty:
-                    n_date_for_stash = n_cand[COL_EDATE].min()
-        except Exception:
-            n_date_for_stash = n_date
-
-        # Stash condition (updated requirement):
-        # If there exists an OLD future rate whose effective date is later than the NEW effective date,
-        # create a "Stashed" row for that old future rate (pick the nearest future old date).
-        # This must look at ALL old rows for the code (not just keep_latest_per_code) because Jera can
-        # have multiple future scheduled rates per destination.
-        old_future_row = None
-        if bool(both[i]) and isinstance(code, str) and code.strip() and pd.notna(n_date_for_stash):
-            try:
-                cand = left_all[left_all[COL_CODE].astype(str).str.strip().eq(str(code).strip())].copy()
-                cand = cand[pd.notna(cand[COL_EDATE])]
-                cand = cand[cand[COL_EDATE] > n_date_for_stash]
-                if not cand.empty:
-                    # pick the nearest future old effective date
-                    cand = cand.sort_values(by=[COL_EDATE], kind="mergesort")
-                    old_future_row = cand.iloc[0]
-            except Exception:
-                old_future_row = None
-
-        stash_case = old_future_row is not None
+        # Stash detection (fast path): use precomputed per-code info
+        code_key = str(code).strip() if isinstance(code, str) else str(code)
+        n_date_for_stash = right_min_date_by_code.get(code_key, n_date)
+        old_future_row = stashed_old_row_by_code.get(code_key)
+        stash_case = bool(both[i]) and (old_future_row is not None) and pd.notna(n_date_for_stash)
 
         #########################
         # ading the code name col
@@ -259,32 +276,25 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
             })
 
         if right_only[i]:
-            print(" → Detected as NEW")
             change_type = "New"
             eff_note = effective_note(n_date, as_of, notice_days)
             status = "Accepted" if eff_note == "proper 7-day notice" else "Rejected"
             notes.append(eff_note)
             reasons = validate_row(pd.Series({COL_CODE: r[COL_CODE], COL_RATE: n_rate, COL_EDATE: n_date, COL_BI: r.get(f"{COL_BI}_new", "")}))
             if reasons:
-                print(f"   Validation failed: {reasons}")
                 status = "Rejected"
                 notes.extend(reasons)
             rows.append({"Code": code, "Dst Code Name": dst_name, "Old Rate": o_rate, "New Rate": n_rate, "Old Billing Increment": bi_old, "New Billing Increment": bi_new, "Effective Date": n_date, "Status": status, "Change Type": change_type, "Notes": "; ".join(dict.fromkeys(notes))})
             continue
 
         if left_only[i]:
-            print(" → Detected as CLOSED")
             rows.append({"Code": code, "Dst Code Name": dst_name, "Old Rate": o_rate, "New Rate": n_rate,  "Old Billing Increment": bi_old, "New Billing Increment": bi_new, "Effective Date": n_date, "Status": "Rejected", "Change Type": "Closed", "Notes": "present in current system but missing in new (closed)"})
             continue
 
         left_reasons = validate_row(pd.Series({COL_CODE: r[COL_CODE], COL_RATE: o_rate, COL_EDATE: r.get(f"{COL_EDATE}_old", pd.NaT), COL_BI: r.get(f"{COL_BI}_old", "")}))
         right_reasons = validate_row(pd.Series({COL_CODE: r[COL_CODE], COL_RATE: n_rate, COL_EDATE: n_date, COL_BI: r.get(f"{COL_BI}_new", "")}))
         invalid = bool(left_reasons or right_reasons)
-        if invalid:
-            print(f"   Validation issues: {left_reasons + right_reasons}")
-
         if bi_changed[i]:
-            print(" → Billing Increment changed")
 
             # Build a combined label. We'll append a rate label with backdated/normal flavor.
             labels = ["Billing Increments Changes"]
@@ -330,28 +340,23 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
                 eff_note = effective_note(n_date, as_of, notice_days)
                 if delta > (rate_tol if rate_tol > 0 else 0.0):
                     if n_date < as_of:
-                        print("   Backdated Increase detected")
                         change_type = "Backdated Increase"
                         status = "Rejected"
                         notes.append("immediate effective date")
                     elif eff_note == "proper 7-day notice":
-                        print("   Proper Increase")
                         change_type = "Increase"
                         status = "Accepted"
                         notes.append("proper 7-day notice")
                     else:
-                        print("   Increase but invalid notice")
                         change_type = "Increase"
                         status = "Rejected"
                         notes.append(eff_note)
                 elif delta < (-(rate_tol if rate_tol > 0 else 0.0)):
                     if n_date < as_of:
-                        print("   Backdated Decrease")
                         change_type = "Backdated Decrease"
                         status = "Accepted"
                         notes.append("backdated decrease")
                     else:
-                        print("   Normal Decrease")
                         change_type = "Decrease"
                         status = "Accepted"
                         notes.append("normal decrease")
@@ -360,7 +365,6 @@ def compare(left: pd.DataFrame, right: pd.DataFrame, as_of_date: Optional[str], 
                     status = "Ignored"
                     notes.append("no change identified")
             else:
-                print(" → Cannot compare rates (invalid data)")
                 change_type = "Increase"
                 status = "Rejected"
                 notes.append("cannot determine change due to invalid data")

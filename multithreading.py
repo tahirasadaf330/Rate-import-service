@@ -547,6 +547,13 @@ def process_one_folder(folder: Path) -> str:
     # -------- 3) Comparison (if needed) --------
     meta = load_metadata(folder) or {}
     if "comparision_result" not in (meta.keys()):
+        # Hard stop: if preprocessing failed, do NOT proceed to comparison.
+        # This prevents compare/DB push when cleaned outputs are incomplete or invalid.
+        if meta.get("final_ok") is False:
+            meta["comparision_result"] = {"result": "comparison skipped: preprocessing failed (final_ok=false)"}
+            save_metadata(folder, meta)
+            return f"[{folder.name}] skip compare: preprocessing failed"
+
         # pre_map = meta.get("preprocessed_results", {}) or {}
 
         pre_map_raw = meta.get("preprocessed_results") or {}
@@ -651,7 +658,9 @@ def process_one_folder(folder: Path) -> str:
             try:
                 right_df = read_table(str(v), None)
                 # exact match mode (no tolerance)
-                result, stats = compare(left_df, right_df, as_of_date, 7, 0.0)
+                # show progress for large comparisons so it doesn't look "stuck"
+                progress_every = int(os.getenv("COMPARE_PROGRESS_EVERY", "0") or "0")
+                result, stats = compare(left_df, right_df, as_of_date, 7, 0.0, progress_every=progress_every)
                 out_path = folder / f"{v.stem}_comparision_result.xlsx"
                 write_excel(result, str(out_path))
                 print(f"[{folder.name}] wrote result to {out_path}")
