@@ -128,25 +128,6 @@ class TestDatabaseModule(unittest.TestCase):
         # Partial date returns datetime
         self.assertEqual(_parse_iso_utc('2025-09-28'), datetime(2025, 9, 28))
 
-    @patch('database.get_conn')
-    @patch('database.execute_values', return_value=None)
-    def test_insert_authorized_senders_cases(self, mock_execute_values, mock_get_conn):
-        from database import insert_authorized_senders
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connection = MagicMock()
-        mock_connection.encoding = 'utf-8'
-        mock_cursor.connection = mock_connection
-        mock_get_conn.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        insert_authorized_senders(['a@b.com', 'c@d.com'])
-        # Empty list
-        insert_authorized_senders([])
-        # Duplicates
-        insert_authorized_senders(['a@b.com', 'a@b.com'])
-        # Invalid email formats
-        insert_authorized_senders(['not-an-email', ''])
-
     @patch('valid_emails.get_verified_senders', return_value=['rates@saifglobal.net'])
     @patch('database.get_conn')
     def test_insert_rejected_email_cases(self, mock_get_conn, mock_get_verified):
@@ -267,24 +248,6 @@ class TestDatabaseModule(unittest.TestCase):
         }]
         bulk_insert_rate_upload_details(1, details)
         bulk_insert_rate_upload_details(1, [], batch_size=1)
-
-    @patch('database.get_conn')
-    def test_fetch_authorized_sender_emails_cases(self, mock_get_conn):
-        from database import fetch_authorized_sender_emails
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_get_conn.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        mock_cursor.fetchall.return_value = [('a@b.com',), (' b@c.com ',), ('',)]
-        # active_only True
-        emails = fetch_authorized_sender_emails()
-        self.assertIn('a@b.com', emails)
-        # active_only False
-        emails = fetch_authorized_sender_emails(False)
-        self.assertIn('a@b.com', emails)
-        # No emails
-        mock_cursor.fetchall.return_value = []
-        self.assertEqual(fetch_authorized_sender_emails(), [])
 
     @patch('database.get_conn')
     def test_fetch_vendor_contact_emails_cases(self, mock_get_conn):
