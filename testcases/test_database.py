@@ -287,6 +287,23 @@ class TestDatabaseModule(unittest.TestCase):
         self.assertEqual(fetch_authorized_sender_emails(), [])
 
     @patch('database.get_conn')
+    def test_fetch_vendor_contact_emails_cases(self, mock_get_conn):
+        from database import fetch_vendor_contact_emails
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_get_conn.return_value.__enter__.return_value = mock_conn
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [('a@b.com',), (' b@c.com ',), ('',)]
+
+        emails = fetch_vendor_contact_emails()
+        self.assertIn('a@b.com', emails)
+        self.assertIn('b@c.com', emails)
+
+        # No emails
+        mock_cursor.fetchall.return_value = []
+        self.assertEqual(fetch_vendor_contact_emails(), [])
+
+    @patch('database.get_conn')
     def test_insert_or_update_ingest_file_cases(self, mock_get_conn):
         from database import insert_or_update_ingest_file
         mock_conn = MagicMock()

@@ -17,7 +17,8 @@ from database import (
     insert_rate_upload,
     bulk_insert_rate_upload_details,
     mark_processing_stage,
-    fetch_authorized_sender_date_format,
+    fetch_vendor_date_format_by_sender_email,
+    fetch_vendor_context_by_sender_email,
 )
 from jerasoft import export_rates_by_query, get_table_id_by_name, fetch_active_current_future_rates, save_rates_to_excel
 
@@ -334,19 +335,25 @@ def process_one_folder(folder: Path) -> str:
     meta = load_metadata(folder)
     if not meta:
         return f"[{folder.name}] skip: no/invalid metadata.json"
-    # DB is source-of-truth for date format. If DB has a format, always use it.
-    sender_fmt = None
+    # DB is source-of-truth for date format, based on vendor:
+    # sender email -> vendor_contacts -> vendors.date_format
+    vendor_fmt = None
+    vendor_ctx: Dict[str, Any] = {"vendor_id": None, "vendor_date_format": None}
     try:
-        sender_fmt = fetch_authorized_sender_date_format(meta.get("sender"))
+        vendor_ctx = fetch_vendor_context_by_sender_email(meta.get("sender"))
+        vendor_fmt = vendor_ctx.get("vendor_date_format") or None
     except Exception:
-        sender_fmt = None
+        vendor_ctx = {"vendor_id": None, "vendor_date_format": None}
+        vendor_fmt = None
 
-    if sender_fmt:
+    if vendor_fmt:
         # Override metadata (even if it was auto-detected as YYYY-MM-DD)
-        if (meta.get("date_format_identified") or "").strip() != sender_fmt:
-            meta["date_format_identified"] = sender_fmt
+        if (meta.get("date_format_identified") or "").strip() != vendor_fmt:
+            meta["date_format_identified"] = vendor_fmt
         if not bool(meta.get("date_verification_ingestion_status")):
             meta["date_verification_ingestion_status"] = True
+        if vendor_ctx.get("vendor_id") is not None:
+            meta["vendor_id"] = vendor_ctx.get("vendor_id")
         save_metadata(folder, meta)
         try:
             mark_processing_stage(directory_name=folder.name, stage="date_format_fetched")
@@ -461,11 +468,11 @@ def process_one_folder(folder: Path) -> str:
     meta = load_metadata(folder) or {}
     pre_map: dict = meta.get("preprocessed_results", {}) or {}
     if not pre_map:
-        # DB-first: if available, prefer sender-level format over metadata for parsing vendor files
-        fmt_db = sender_fmt
+        # DB-first: if available, prefer vendor-level format over metadata for parsing vendor files
+        fmt_db = vendor_fmt
         if not fmt_db:
             try:
-                fmt_db = fetch_authorized_sender_date_format(meta.get("sender"))
+                fmt_db = fetch_vendor_date_format_by_sender_email(meta.get("sender"))
             except Exception:
                 fmt_db = None
         any_files = False

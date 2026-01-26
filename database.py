@@ -558,6 +558,44 @@ def fetch_authorized_sender_emails(active_only: bool = True) -> List[str]:
     return emails
 
 
+def fetch_vendor_contact_emails(active_only: bool = True) -> List[str]:
+    """
+    Return a list of vendor contact emails from vendor_contacts (optionally only active ones),
+    limited to contacts whose vendor is active as well.
+
+    Tables (as per your DB):
+      - vendor_contacts(email, vendor_id, status)
+      - vendors(id, status)
+    """
+    where_bits = []
+    if active_only:
+        where_bits.append("COALESCE(vc.status, TRUE) = TRUE")
+        where_bits.append("COALESCE(v.status, TRUE) = TRUE")
+    where = ("WHERE " + " AND ".join(where_bits)) if where_bits else ""
+
+    sql = f"""
+        SELECT vc.email
+        FROM vendor_contacts vc
+        JOIN vendors v ON v.id = vc.vendor_id
+        {where}
+        ORDER BY vc.email ASC
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
+
+    seen = set()
+    emails: List[str] = []
+    for (email,) in rows:
+        if not email:
+            continue
+        e = str(email).strip()
+        if e and e not in seen:
+            seen.add(e)
+            emails.append(e)
+    return emails
+
+
 def fetch_authorized_sender_date_format(email: Optional[str]) -> Optional[str]:
     """
     Fetch per-sender date_format from authorized_senders.
@@ -587,6 +625,53 @@ def fetch_authorized_sender_date_format(email: Optional[str]) -> Optional[str]:
         return fmt or None
     except Exception:
         return None
+
+
+# ─────────────────────── Vendor date format lookup ───────────────────────
+def fetch_vendor_context_by_sender_email(email: Optional[str]) -> Dict[str, Any]:
+    """
+    Resolve sender email -> vendor_id -> vendor date_format using:
+
+      vendor_contacts.email -> vendor_contacts.vendor_id -> vendors.date_format
+
+    Returns:
+      {"vendor_id": Optional[int], "vendor_date_format": Optional[str]}
+    """
+    out: Dict[str, Any] = {"vendor_id": None, "vendor_date_format": None}
+    if not email:
+        return out
+    e = str(email).strip()
+    if not e:
+        return out
+
+    sql = """
+        SELECT vc.vendor_id, v.date_format
+        FROM vendor_contacts vc
+        JOIN vendors v ON v.id = vc.vendor_id
+        WHERE LOWER(vc.email) = LOWER(%s)
+          AND COALESCE(vc.status, TRUE) = TRUE
+          AND COALESCE(v.status, TRUE) = TRUE
+        ORDER BY vc.id ASC
+        LIMIT 1
+    """
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, (e,))
+            row = cur.fetchone()
+        if not row:
+            return out
+        vendor_id, fmt = row[0], row[1]
+        out["vendor_id"] = int(vendor_id) if vendor_id is not None else None
+        out["vendor_date_format"] = (str(fmt).strip() if fmt is not None else None) or None
+        return out
+    except Exception:
+        return out
+
+
+def fetch_vendor_date_format_by_sender_email(email: Optional[str]) -> Optional[str]:
+    """Convenience wrapper: return vendor date_format (if any) for sender email."""
+    ctx = fetch_vendor_context_by_sender_email(email)
+    return ctx.get("vendor_date_format") or None
 
 
 def upsert_authorized_sender_date_format(

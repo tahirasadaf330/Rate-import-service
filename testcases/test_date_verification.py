@@ -70,7 +70,7 @@ class TestDateVerification(unittest.TestCase):
             self.assertFalse(bool(kwargs.get("is_format_auto_detected")))
             return 999
 
-        with patch("date_verification.fetch_authorized_sender_date_format", return_value="DD-MM-YYYY"), \
+        with patch("date_verification.fetch_vendor_context_by_sender_email", return_value={"vendor_id": 7, "vendor_date_format": "DD-MM-YYYY"}), \
              patch("date_verification.insert_or_update_ingest_file", side_effect=_fake_upsert) as mock_upsert, \
              patch("date_verification.mark_processing_stage", return_value=None):
             scanned, inserted, skipped = date_verification.ingest_files_for_manual_date(root)
@@ -84,6 +84,7 @@ class TestDateVerification(unittest.TestCase):
         self.assertTrue(meta2.get("date_verification_ingestion"))
         self.assertTrue(meta2.get("date_verification_ingestion_status"))
         self.assertEqual(meta2.get("date_format_identified"), "DD-MM-YYYY")
+        self.assertEqual(meta2.get("vendor_id"), 7)
 
     def test_ingest_files_autodetect_sets_meta_and_ingest_row_when_no_db_format(self):
         root = Path(tempfile.mkdtemp())
@@ -114,11 +115,10 @@ class TestDateVerification(unittest.TestCase):
             self.assertTrue(bool(kwargs.get("is_format_auto_detected")))
             return 123
 
-        with patch("date_verification.fetch_authorized_sender_date_format", return_value=None), \
+        with patch("date_verification.fetch_vendor_context_by_sender_email", return_value={"vendor_id": 7, "vendor_date_format": None}), \
              patch("date_verification._read_excel_native", return_value=df_native), \
              patch("date_verification._has_native_datetimes", return_value=True), \
              patch("date_verification.insert_or_update_ingest_file", side_effect=_fake_upsert), \
-             patch("date_verification.upsert_authorized_sender_date_format", return_value=True) as mock_auth_upsert, \
              patch("date_verification.mark_processing_stage", return_value=None):
             scanned, inserted, skipped = date_verification.ingest_files_for_manual_date(root)
 
@@ -130,7 +130,7 @@ class TestDateVerification(unittest.TestCase):
         self.assertTrue(meta2.get("date_verification_ingestion"))
         self.assertTrue(meta2.get("date_verification_ingestion_status"))
         self.assertEqual(meta2.get("date_format_identified"), "YYYY-MM-DD")
-        self.assertTrue(mock_auth_upsert.called)
+        # We no longer persist autodetected formats to authorized_senders; manual/vendor storage happens elsewhere.
 
 
 if __name__ == '__main__':
