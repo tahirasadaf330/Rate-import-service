@@ -1,8 +1,8 @@
 from database import (
     mark_processing_stage,
     insert_or_update_ingest_file,
-    fetch_authorized_sender_date_format,
-    upsert_authorized_sender_date_format,
+    fetch_vendor_date_format_by_sender_email,
+    fetch_vendor_context_by_sender_email,
 )
 from datetime import date, datetime, timezone
 import pandas as pd
@@ -152,17 +152,20 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
             skipped += 1
             continue
         
-        # DB-first: if sender already has a saved date_format, we will still upsert ingest_files
-        # but mark it approved with that format.
+        # DB-first: if vendor has a saved date_format (via vendor_contacts -> vendors),
+        # we will still upsert ingest_files but mark it approved with that format.
         try:
             sender_email = (meta.get("sender") or "").strip() or None
         except Exception:
             sender_email = None
-        sender_fmt = None
+        vendor_fmt = None
+        vendor_ctx: Dict[str, Any] = {"vendor_id": None, "vendor_date_format": None}
         try:
-            sender_fmt = fetch_authorized_sender_date_format(sender_email)
+            vendor_ctx = fetch_vendor_context_by_sender_email(sender_email)
+            vendor_fmt = vendor_ctx.get("vendor_date_format") or None
         except Exception:
-            sender_fmt = None
+            vendor_ctx = {"vendor_id": None, "vendor_date_format": None}
+            vendor_fmt = None
 
         # Build the preview_cache
         preview_cache: list[dict] = []
@@ -180,8 +183,8 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
             elif ext in EXCEL_EXTS:
                 # Read natively (no dtype=str) to detect Excel-native date cells
                 df_native = _read_excel_native(str(fpath), sheet=0)
-                # Only attempt autodetect when we don't already have a sender-level format
-                autodetected = (not bool(sender_fmt)) and _has_native_datetimes(df_native)
+                # Only attempt autodetect when we don't already have a vendor-level format
+                autodetected = (not bool(vendor_fmt)) and _has_native_datetimes(df_native)
                 # Stringified preview for UI
                 preview_cache = _df_preview_records(df_native, MAX_PREVIEW_ROWS)
 
@@ -209,10 +212,10 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
         # - sender_fmt exists (DB-first) -> treat as approved using that format
         # - autodetected Excel native dates -> approve as YYYY-MM-DD
         upsert_kwargs = {}
-        if sender_fmt:
+        if vendor_fmt:
             upsert_kwargs.update({
                 "status": "approved",
-                "date_format": sender_fmt,
+                "date_format": vendor_fmt,
                 "approved_at": datetime.now(timezone.utc),
                 "is_format_auto_detected": False,
             })
@@ -243,9 +246,11 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
 
             # If we auto-detected native dates for Excel, mark folder approved too
                         # If we auto-detected native dates for Excel, mark folder approved too
-            if sender_fmt:
+            if vendor_fmt:
                 meta["date_verification_ingestion_status"] = True
-                meta["date_format_identified"] = sender_fmt
+                meta["date_format_identified"] = vendor_fmt
+                if vendor_ctx.get("vendor_id") is not None:
+                    meta["vendor_id"] = vendor_ctx.get("vendor_id")
                 try:
                     mark_processing_stage(directory_name=folder.name, stage="date_format_fetched")
                 except Exception as e:
@@ -253,14 +258,6 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
             elif ext in EXCEL_EXTS and autodetected:
                 meta["date_verification_ingestion_status"] = True
                 meta["date_format_identified"] = "YYYY-MM-DD"
-                # Autodetected date format should be persisted per-sender so next emails can reuse it.
-                try:
-                    upsert_authorized_sender_date_format(
-                        email=email_address,
-                        date_format="YYYY-MM-DD",
-                    )
-                except Exception:
-                    pass
                 try:
                     mark_processing_stage(directory_name=folder.name, stage="date_format_fetched")
                 except Exception as e:

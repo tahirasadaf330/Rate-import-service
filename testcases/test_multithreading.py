@@ -35,7 +35,7 @@ from multithreading import (
 class TestMultithreading(unittest.TestCase):
     def setUp(self):
         # Prevent unit tests from hitting a real DB (process_one_folder is DB-first for date format)
-        self._db_fmt_patcher = patch("multithreading.fetch_authorized_sender_date_format", return_value=None)
+        self._db_fmt_patcher = patch("multithreading.fetch_vendor_context_by_sender_email", return_value={"vendor_id": None, "vendor_date_format": None})
         self._db_fmt_patcher.start()
         self.addCleanup(self._db_fmt_patcher.stop)
 
@@ -183,7 +183,7 @@ class TestMultithreading(unittest.TestCase):
         # create dummy attachment so export path has a basename
         (self.test_dir / "dummy.xlsx").write_bytes(b"")
 
-        with patch("multithreading.fetch_authorized_sender_date_format", return_value="MM-DD-YYYY"), \
+        with patch("multithreading.fetch_vendor_context_by_sender_email", return_value={"vendor_id": 7, "vendor_date_format": "MM-DD-YYYY"}), \
              patch("multithreading.export_rates_by_query", return_value="boom"), \
              patch("multithreading.mark_processing_stage", return_value=None):
             msg = process_one_folder(self.test_dir)
@@ -192,6 +192,7 @@ class TestMultithreading(unittest.TestCase):
         meta2 = load_metadata(self.test_dir)
         self.assertEqual(meta2.get("date_format_identified"), "MM-DD-YYYY")
         self.assertTrue(bool(meta2.get("date_verification_ingestion_status")))
+        self.assertEqual(meta2.get("vendor_id"), 7)
 
     def test_cleaning_uses_db_format_over_metadata(self):
         # approved folder, but metadata has a different date_format than DB
@@ -212,7 +213,7 @@ class TestMultithreading(unittest.TestCase):
             seen["date_format_email"] = date_format_email
             return pd.DataFrame({"x": [1]})
 
-        with patch("multithreading.fetch_authorized_sender_date_format", return_value="MM-DD-YYYY"), \
+        with patch("multithreading.fetch_vendor_context_by_sender_email", return_value={"vendor_id": 7, "vendor_date_format": "MM-DD-YYYY"}), \
              patch("multithreading.load_clean_rates", side_effect=_fake_clean), \
              patch("multithreading.mark_processing_stage", return_value=None):
             msg = process_one_folder(self.test_dir)

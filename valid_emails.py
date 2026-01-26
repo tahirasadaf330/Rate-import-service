@@ -12,8 +12,9 @@ def refresh_verified_senders(active_only: bool = True) -> List[str]:
     try:
         # Local import to avoid circulars and allow this module to be imported
         # in environments where DB isn't available (e.g., tooling).
-        from database import fetch_authorized_sender_emails
-        emails = fetch_authorized_sender_emails(active_only=active_only)
+        # Verified senders are vendor contacts (not authorized_senders).
+        from database import fetch_vendor_contact_emails
+        emails = fetch_vendor_contact_emails(active_only=active_only)
 
         # mutate in place; do NOT rebind the name
         VERIFIED_SENDERS.clear()

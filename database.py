@@ -1,7 +1,6 @@
 import os
 from dotenv import load_dotenv
 import psycopg2
-from valid_emails import VERIFIED_SENDERS
 from typing import Iterable, Dict, Any, Optional, List, Mapping, Tuple
 from datetime import datetime
 from decimal import Decimal
@@ -25,29 +24,6 @@ def get_conn():
         user=os.getenv("DB_USERNAME"),
         password=os.getenv("DB_PASSWORD"),
     )
-
-def insert_authorized_senders(emails):
-    """
-    Insert a list of emails into authorized_senders.
-    Uses ON CONFLICT DO NOTHING to avoid duplicate errors.
-    """
-    query = """
-        INSERT INTO authorized_senders (email, status, created_at, updated_at)
-        VALUES %s
-        ON CONFLICT (email) DO NOTHING;
-    """
-
-    # Prepare rows: status = true, timestamps = now()
-    rows = [(email, True, "NOW()", "NOW()") for email in emails]
-
-    # psycopg2 cannot handle NOW() as string, so use SQL functions directly
-    values_template = "(%s, %s, NOW(), NOW())"
-
-    with get_conn() as conn, conn.cursor() as cur:
-        execute_values(cur, query, [(email, True) for email in emails], template=values_template)
-        conn.commit()
-        print(f"Inserted {cur.rowcount} new emails into authorized_senders.")
-
 
 # -----------------------------
 # Rejected emails (row-per-item) support
@@ -522,128 +498,90 @@ def fetch_rate_upload_details_for_upload(
 
     return [dict(zip(cols, r)) for r in rows]
     
-def fetch_authorized_sender_emails(active_only: bool = True) -> List[str]:
+def fetch_vendor_contact_emails(active_only: bool = True) -> List[str]:
     """
-    Return a list of email addresses from the authorized_senders table.
+    Return a list of vendor contact emails from vendor_contacts (optionally only active ones),
+    limited to contacts whose vendor is active as well.
 
-    Args:
-        active_only: If True (default), only rows with status = TRUE are returned.
-                     If False, all rows are returned regardless of status.
-
-    Returns:
-        List[str]: deduplicated, trimmed email addresses ordered alphabetically.
+    Tables (as per your DB):
+      - vendor_contacts(email, vendor_id, status)
+      - vendors(id, status)
     """
-    where = "WHERE status IS TRUE" if active_only else ""
+    where_bits = []
+    if active_only:
+        where_bits.append("COALESCE(vc.status, TRUE) = TRUE")
+        where_bits.append("COALESCE(v.status, TRUE) = TRUE")
+    where = ("WHERE " + " AND ".join(where_bits)) if where_bits else ""
+
     sql = f"""
-        SELECT email
-        FROM authorized_senders
+        SELECT vc.email
+        FROM vendor_contacts vc
+        JOIN vendors v ON v.id = vc.vendor_id
         {where}
-        ORDER BY email ASC;
+        ORDER BY vc.email ASC
     """
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql)
         rows = cur.fetchall()
 
-    # Trim, drop empties, and dedupe while preserving sort from SQL
     seen = set()
     emails: List[str] = []
     for (email,) in rows:
         if not email:
             continue
-        e = email.strip()
+        e = str(email).strip()
         if e and e not in seen:
             seen.add(e)
             emails.append(e)
-
     return emails
 
 
-def fetch_authorized_sender_date_format(email: Optional[str]) -> Optional[str]:
+# ─────────────────────── Vendor date format lookup ───────────────────────
+def fetch_vendor_context_by_sender_email(email: Optional[str]) -> Dict[str, Any]:
     """
-    Fetch per-sender date_format from authorized_senders.
+    Resolve sender email -> vendor_id -> vendor date_format using:
 
-    Notes:
-    - Requires `authorized_senders.date_format` column to exist.
-    - Returns None if not found or on DB errors (fail-open).
+      vendor_contacts.email -> vendor_contacts.vendor_id -> vendors.date_format
+
+    Returns:
+      {"vendor_id": Optional[int], "vendor_date_format": Optional[str]}
     """
+    out: Dict[str, Any] = {"vendor_id": None, "vendor_date_format": None}
     if not email:
-        return None
+        return out
     e = str(email).strip()
     if not e:
-        return None
+        return out
 
     sql = """
-        SELECT date_format
-        FROM authorized_senders
-        WHERE LOWER(email) = LOWER(%s)
+        SELECT vc.vendor_id, v.date_format
+        FROM vendor_contacts vc
+        JOIN vendors v ON v.id = vc.vendor_id
+        WHERE LOWER(vc.email) = LOWER(%s)
+          AND COALESCE(vc.status, TRUE) = TRUE
+          AND COALESCE(v.status, TRUE) = TRUE
+        ORDER BY vc.id ASC
         LIMIT 1
     """
     try:
         with get_conn() as conn, conn.cursor() as cur:
             cur.execute(sql, (e,))
             row = cur.fetchone()
-        fmt = row[0] if row else None
-        fmt = str(fmt).strip() if fmt is not None else None
-        return fmt or None
+        if not row:
+            return out
+        vendor_id, fmt = row[0], row[1]
+        out["vendor_id"] = int(vendor_id) if vendor_id is not None else None
+        out["vendor_date_format"] = (str(fmt).strip() if fmt is not None else None) or None
+        return out
     except Exception:
-        return None
+        return out
 
 
-def upsert_authorized_sender_date_format(
-    *,
-    email: Optional[str],
-    date_format: Optional[str],
-    status: Optional[bool] = True,
-    updated_by: Optional[int] = None,
-) -> bool:
-    """
-    Upsert (insert or update) `authorized_senders.date_format` for a sender email.
+def fetch_vendor_date_format_by_sender_email(email: Optional[str]) -> Optional[str]:
+    """Convenience wrapper: return vendor date_format (if any) for sender email."""
+    ctx = fetch_vendor_context_by_sender_email(email)
+    return ctx.get("vendor_date_format") or None
 
-    Used by:
-      - backend autodetect (to persist YYYY-MM-DD when we detect native Excel dates)
-      - UI/manual approval (if you choose to call this from your backend/API layer)
-
-    Returns True on successful DB commit; False otherwise.
-    """
-    if not email:
-        return False
-    e = str(email).strip()
-    if not e:
-        return False
-
-    fmt = str(date_format).strip() if date_format is not None else ""
-    if not fmt:
-        return False
-
-    if updated_by is None:
-        sql = """
-            INSERT INTO authorized_senders (email, status, date_format, created_at, updated_at)
-            VALUES (%s, COALESCE(%s, TRUE), %s, NOW(), NOW())
-            ON CONFLICT (email) DO UPDATE
-               SET date_format = EXCLUDED.date_format,
-                   status      = COALESCE(EXCLUDED.status, authorized_senders.status),
-                   updated_at  = NOW()
-        """
-        params = (e, status, fmt)
-    else:
-        sql = """
-            INSERT INTO authorized_senders (email, status, date_format, updated_by, created_at, updated_at)
-            VALUES (%s, COALESCE(%s, TRUE), %s, %s, NOW(), NOW())
-            ON CONFLICT (email) DO UPDATE
-               SET date_format = EXCLUDED.date_format,
-                   status      = COALESCE(EXCLUDED.status, authorized_senders.status),
-                   updated_by  = EXCLUDED.updated_by,
-                   updated_at  = NOW()
-        """
-        params = (e, status, fmt, int(updated_by))
-
-    try:
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(sql, params)
-            conn.commit()
-        return True
-    except Exception:
-        return False
 
 # ____________ Ingesting file for date format review _________________
 
