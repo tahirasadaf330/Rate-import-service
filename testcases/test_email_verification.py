@@ -266,6 +266,21 @@ class TestEmailVerification(unittest.TestCase):
                 "inp": "Acme prefix 123 effective 2025-12-01 +05:00",
                 "equals": "Acme prefix 123 effective",
             },
+            {
+                "name": "tid_block_stripped",
+                "inp": "New Voice Rates for Hayo Telecom Inc. Platinum [TID:4445188]",
+                "equals": "New Voice Rates for Hayo Telecom Inc. Platinum",
+            },
+            {
+                "name": "tid_block_stripped_with_extra_note",
+                "inp": "New Voice Rates for Hayo Telecom Inc. Gold (Open RTP) [TID:4445265]",
+                "equals": "New Voice Rates for Hayo Telecom Inc. Gold (Open RTP)",
+            },
+            {
+                "name": "tid_block_stripped_simple_gold",
+                "inp": "New Voice Rates for Hayo Telecom Inc. Gold [TID:4445272]",
+                "equals": "New Voice Rates for Hayo Telecom Inc. Gold",
+            },
         ]
 
         for c in cases:

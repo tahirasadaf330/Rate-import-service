@@ -160,6 +160,10 @@ def _strip_date_time_tokens_for_invalid_subject(subj: str) -> str:
     subj = re.sub(r"[;|,/\\]+", " ", subj)
     subj = re.sub(r"\s+", " ", subj).strip()
 
+    # Strip tracking IDs like "[TID:4445188]" so that subjects which differ
+    # only by a TID value map to the same invalid-subject key.
+    subj = re.sub(r"\[\s*TID\s*:\s*\d+\s*\]", "", subj, flags=re.IGNORECASE)
+
     # Remove time tokens
     subj = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", "", subj)  # HH:MM or HH:MM:SS
     subj = re.sub(r"\b\d{6}\b", "", subj)  # HHMMSS
