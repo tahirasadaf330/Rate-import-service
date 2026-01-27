@@ -249,18 +249,10 @@ def compute_upload_stats(dfs: List[pd.DataFrame]) -> Dict[str, int]:
     is_inc = _has_ct(df, "Increase") & ~is_back_inc
     is_dec = _has_ct(df, "Decrease") & ~is_back_dec
 
-    # Billing increment changes: prefer ground truth from columns if present;
-    # otherwise fall back to label membership.
-    bic = 0
-    obi = df.get("Old Billing Increment")
-    nbi = df.get("New Billing Increment")
-    if obi is not None and nbi is not None:
-        # Compare with nulls treated as equal and types normalized
-        o = pd.Series(obi, dtype="string").fillna("")
-        n = pd.Series(nbi, dtype="string").fillna("")
-        bic = int((o != n).sum())
-    else:
-        bic = int(_has_ct(df, "Billing Increments Changes").sum())
+    # Billing increment changes: count only rows whose Change Type includes
+    # the "Billing Increments Changes" label. This avoids treating Closed
+    # rows (which often have Old BI set and New BI as NaN) as BI changes.
+    bic = int(_has_ct(df, "Billing Increments Changes").sum())
 
     return {
         "total_rows": int(len(df)),

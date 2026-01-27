@@ -144,6 +144,27 @@ class TestMultithreading(unittest.TestCase):
         stats = compute_upload_stats([df])
         self.assertEqual(stats["new"], 1)
         self.assertEqual(stats["closed"], 1)
+        # No "Billing Increments Changes" label present, so count should be zero
+        self.assertEqual(stats["billing_increment_changes"], 0)
+
+    def test_compute_upload_stats_billing_increment_changes_from_label_only(self):
+        # Row 1 explicitly marked as Billing Increments Changes
+        # Row 2 is Closed with different Old/New BI but no label -> should NOT be counted
+        df = pd.DataFrame({
+            "Code": ["2001", "2002"],
+            "Old Rate": [0.05, 0.06],
+            "New Rate": [0.07, np.nan],
+            "Effective Date": ["2025-11-22", "2025-11-23"],
+            "Status": ["new", "rejected"],
+            "Change Type": ["Billing Increments Changes", "Closed"],
+            "Old Billing Increment": ["1/1", "1/1"],
+            "New Billing Increment": ["1/2", np.nan],
+            "Notes": ["", "present in current system but missing in new (closed)"]
+        })
+        df["Effective Date"] = pd.to_datetime(df["Effective Date"])
+        stats = compute_upload_stats([df])
+        # Only the row with the explicit label should be counted
+        self.assertEqual(stats["billing_increment_changes"], 1)
 
     def test_parse_received_at(self):
         meta = load_metadata(self.test_dir)
