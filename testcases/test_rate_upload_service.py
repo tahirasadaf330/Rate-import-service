@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import patch, MagicMock
+import os
 import rate_upload_service
 
 class TestRateUploadService(unittest.TestCase):
@@ -8,17 +9,19 @@ class TestRateUploadService(unittest.TestCase):
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_cursor.fetchall.return_value = [
-            (1, 'subject', 'sender', 123, 'pending_bulk', None, 10, '2025-01-01', 'file.xlsx')
+            (1, 'subject', 'sender', 123, 'pending_bulk', None, 10, '2025-01-01', 'file.xlsx', 'Super Admin')
         ]
         mock_cursor.description = [
             ('id',), ('subject',), ('sender_email',), ('jera_table_id',), ('jera_upload_status',),
-            ('jera_upload_result',), ('total_rows',), ('created_at',), ('comparison_file_path',)
+            ('jera_upload_result',), ('total_rows',), ('created_at',), ('comparison_file_path',),
+            ('jera_imported_by_name',)
         ]
         mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
         mock_get_conn.return_value.__enter__.return_value = mock_conn
         uploads = rate_upload_service.get_pending_bulk_uploads()
         self.assertEqual(len(uploads), 1)
         self.assertEqual(uploads[0]['id'], 1)
+        self.assertEqual(uploads[0]['jera_imported_by_name'], 'Super Admin')
 
     @patch('rate_upload_service.get_conn')
     def test_update_bulk_upload_status(self, mock_get_conn):
@@ -55,22 +58,50 @@ class TestRateUploadService(unittest.TestCase):
         mock_get_conn.return_value.__enter__.return_value = mock_conn
         rate_upload_service.verify_upload_status(1)
 
+    @patch('rate_upload_service._pick_vendor_received_filename', return_value='RN_-_18-12-2025_04-17_-_HAYO_CLI_3_v31.xlsx')
     @patch('rate_upload_service.bulk_upload_df_to_jerasoft')
     @patch('rate_upload_service.fetch_rate_upload_details_for_upload')
     @patch('rate_upload_service.update_bulk_upload_status')
     @patch('rate_upload_service.export_db_upload_dataframe')
-    def test_process_bulk_upload_success(self, mock_export, mock_update, mock_fetch, mock_bulk):
+    def test_process_bulk_upload_success(self, mock_export, mock_update, mock_fetch, mock_bulk, mock_pick_vendor):
         mock_fetch.return_value = [
             {"dst_code": "1001", "rate_new": 0.05, "effective_date": "2025-01-01", "status": "Accepted"}
         ]
         mock_bulk.return_value = {'status': 'success', 'filtered_rows': 1, 'files_id': 'fileid123'}
         upload = {
-            'id': 1, 'jera_table_id': 123, 'subject': 'subject', 'sender_email': 'sender',
-            'total_rows': 5, 'comparison_file_path': 'file.xlsx'
+            'id': 1,
+            'jera_table_id': 123,
+            'subject': 'subject',
+            'sender_email': 'sender',
+            'total_rows': 5,
+            'comparison_file_path': 'file.xlsx',
+            'jera_imported_by_name': 'Super Admin',
         }
         result = rate_upload_service.process_bulk_upload(upload, dry_run=True)
         self.assertTrue(result)
         self.assertTrue(mock_export.called)
+
+        # Ensure bulk_upload_df_to_jerasoft received a temp_file_path whose
+        # basename includes '--imported by (Super_Admin).csv'
+        kwargs = mock_bulk.call_args.kwargs
+        temp_path = kwargs.get('temp_file_path')
+        self.assertIsNotNone(temp_path)
+        base = os.path.basename(temp_path)
+        self.assertIn('--imported by (Super_Admin).csv', base)
+
+    def test_pick_temp_csv_path_uses_imported_by_name(self):
+        from rate_upload_service import _pick_temp_csv_path_from_vendor_filename
+
+        path = _pick_temp_csv_path_from_vendor_filename(
+            'RN_-_18-12-2025_04-17_-_HAYO_CLI_3_v31.xlsx',
+            'Super Admin',
+        )
+
+        base = os.path.basename(path)
+        # Expect pattern like RN_..._HAYO_CLI_3_v31--imported by (Super_Admin).csv
+        self.assertTrue(base.startswith('RN_-_18-12-2025_04-17_-_HAYO_CLI_3_v31'))
+        self.assertTrue(base.endswith('.csv'))
+        self.assertIn('--imported by (Super_Admin).csv', base)
 
     @patch('rate_upload_service.stash_future_rates_df_to_jerasoft')
     @patch('rate_upload_service.wait_for_imported_rates_visible')
