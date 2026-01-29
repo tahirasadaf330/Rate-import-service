@@ -446,7 +446,10 @@ def _read_raw_matrix(path: str, sheet=0) -> pd.DataFrame:
         try_order += [i for i in range(len(wb.worksheets)) if i not in try_order]
 
         # helper: pandas-all-sheets fallback (even when row count >= threshold)
+        last_header_err: str | None = None
+
         def _try_pandas_all_sheets():
+            nonlocal last_header_err
             for j in range(len(wb.worksheets)):
                 try:
                     raw_pd = _raw_from_excel_pandas(path, j)
@@ -454,7 +457,9 @@ def _read_raw_matrix(path: str, sheet=0) -> pd.DataFrame:
                         _ = detect_header_row(raw_pd)
                         dbg(f"[excel-fallback] pandas finally found headers on sheet #{j}")
                         return raw_pd
-                    except ValueError:
+                    except ValueError as e:
+                        # remember the most recent, more detailed header error
+                        last_header_err = str(e)
                         continue
                 except Exception as e:
                     dbg(f"[excel-fallback] pandas read failed on sheet #{j}: {e}")
@@ -484,9 +489,12 @@ def _read_raw_matrix(path: str, sheet=0) -> pd.DataFrame:
                 wb.close()
                 print("\n\nDEBUG: Gotcha using the read excel openpyxl method")
                 return chosen  # this sheet has the headers; use it
-            except ValueError:
+            except ValueError as e:
+                # remember the most recent, more detailed header error so we
+                # can surface it if all sheets fail.
+                last_header_err = str(e)
                 print("\n\nDEBUG: Failed the detect_header_row check")
-                # don’t return yet; try other sheets
+                # dont return yet; try other sheets
                 continue
 
         # If we exhausted all openpyxl sheets without finding headers, try pandas across all sheets
@@ -496,7 +504,13 @@ def _read_raw_matrix(path: str, sheet=0) -> pd.DataFrame:
         if raw_pd_any is not None:
             return raw_pd_any
 
-        raise ValueError("No sheet contains all required headers (openpyxl and pandas fallbacks failed).")
+        # If we have a detailed header error from detect_header_row, prefer
+        # that over a generic message so callers/meta/status can show exactly
+        # which canonical columns were missing.
+        if last_header_err:
+            raise ValueError(last_header_err)
+
+        raise ValueError("Header not found on any sheet (openpyxl and pandas fallbacks failed).")
     else:
         # Non-Excel → treat as CSV/TSV/etc.
         try:
@@ -639,9 +653,13 @@ def detect_header_row(raw: pd.DataFrame) -> int:
         dbg("[hdr-scan] best row cells (_norm):", [_norm(x) for x in best_cells])
         dbg("[hdr-scan] best row cells (codepoints):", [_codepoints(str(x)) for x in best_cells])
 
+    # Work out which canonical columns were never satisfied so the error/meta
+    # can explicitly list them (e.g. ['Rate', 'Effective Date']). Keep the
+    # message short so it surfaces cleanly in processing_statuses.status.
+    missing_overall = sorted(targets - best_covered) if best_row != -1 else sorted(targets)
+
     raise ValueError(
-        "Header not found. None of the rows contained all required columns "
-        f"after normalization/aliasing. Required: {REQUIRED_COLS}"
+        "Missing required canonical columns: " f"{missing_overall}"
     )
 
 
@@ -1393,7 +1411,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\HayoTel_A_To_Z___99992_RN.xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\HAYOINCC1872151520260128150511.csv"
     OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 

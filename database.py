@@ -943,6 +943,7 @@ def mark_processing_stage(
     internet_message_id: Optional[str] = None,
     stage: ProcessingStage,
     final_status: Optional[bool] = None,
+    error_message: Optional[str] = None,
 ) -> int:
     """
     Status rules:
@@ -966,10 +967,23 @@ def mark_processing_stage(
 
     # ---- Immediate failure (no gating) ----
     if final_status is False:
-        set_bits += [f"{col} = FALSE", "status = 'failed'"]
+        # Build a human-readable status text but always keep a 'failed' prefix
+        # so reprocessing queries can still match with status LIKE 'failed%'.
+        status_text = "failed"
+        if error_message:
+            msg = str(error_message).strip()
+            if msg:
+                # Avoid unbounded row size; keep the most important part.
+                if len(msg) > 900:
+                    msg = msg[:900] + "...(truncated)"
+                status_text = f"failed: {msg}"
+
+        set_bits += [f"{col} = FALSE", "status = %s"]
         sql = f"UPDATE processing_statuses SET {', '.join(set_bits)} WHERE {where_key_sql}"
+        # Parameter order: first status_text for SET, then WHERE key(s).
+        args = (status_text,) + where_key_args
         with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(sql, where_key_args)
+            cur.execute(sql, args)
             affected = cur.rowcount
             conn.commit()
             return affected
@@ -1080,9 +1094,9 @@ def get_reprocessing_enabled_directories(limit: Optional[int] = None) -> List[st
     base_sql = """
         SELECT directory_name
         FROM processing_statuses
-        WHERE is_reprocessing_enabled = TRUE
-          AND directory_name IS NOT NULL
-          AND status = 'failed'
+                WHERE is_reprocessing_enabled = TRUE
+                    AND directory_name IS NOT NULL
+                    AND status LIKE 'failed%'
         ORDER BY updated_at DESC
     """
     
@@ -1112,9 +1126,9 @@ def get_failed_directories_for_reprocessing(limit: Optional[int] = None) -> List
         SELECT id, internet_message_id, directory_name, sender_email, email_subject, 
                email_received_at, status, is_reprocessing_enabled,
                created_at, updated_at
-        FROM processing_statuses
-        WHERE status = 'failed'
-          AND directory_name IS NOT NULL
+                FROM processing_statuses
+                WHERE status LIKE 'failed%'
+                    AND directory_name IS NOT NULL
         ORDER BY updated_at DESC
     """
     
