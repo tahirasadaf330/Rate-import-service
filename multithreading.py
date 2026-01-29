@@ -412,7 +412,12 @@ def process_one_folder(folder: Path) -> str:
                     
                     # Update processing_statuses to mark jera_fetched as failed
                     try:
-                        mark_processing_stage(directory_name=folder.name, stage="jera_fetched", final_status=False)
+                        mark_processing_stage(
+                            directory_name=folder.name,
+                            stage="jera_fetched",
+                            final_status=False,
+                            error_message=info,
+                        )
                     except Exception as db_error:
                         print(f"[{folder.name}] stage warn (jera_fetched failed): {db_error}")
                     
@@ -449,7 +454,12 @@ def process_one_folder(folder: Path) -> str:
             
             # Update processing_statuses to mark jera_fetched as failed
             try:
-                mark_processing_stage(directory_name=folder.name, stage="jera_fetched", final_status=False)
+                mark_processing_stage(
+                    directory_name=folder.name,
+                    stage="jera_fetched",
+                    final_status=False,
+                    error_message=str(e),
+                )
             except Exception as db_error:
                 print(f"[{folder.name}] stage warn (jera_fetched failed): {db_error}")
             
@@ -501,6 +511,20 @@ def process_one_folder(folder: Path) -> str:
                 pre_map[file_path.name] = False
                 print(f"[{folder.name}] clean fail {file_path.name}: {e}")
 
+                # Track detailed preprocessing error per file in metadata so we can
+                # later see which columns failed to map / other reasons for failure.
+                # This keeps preprocessed_results structure (filename -> bool) intact
+                # while adding a parallel map with error strings.
+                try:
+                    err_map = meta.get("preprocess_errors") or {}
+                    # Store a simple string; the message from _canonicalize_headers
+                    # already includes "Missing required columns: [...]" when mapping fails.
+                    err_map[str(file_path.name)] = str(e)
+                    meta["preprocess_errors"] = err_map
+                except Exception:
+                    # Never let metadata error break the main cleaning loop.
+                    pass
+
         if any_files:
             meta["preprocessed_results"] = pre_map
             save_metadata(folder, meta)
@@ -520,11 +544,27 @@ def process_one_folder(folder: Path) -> str:
             meta["final_ok"] = final_ok
             save_metadata(folder, meta)
 
+            # If cleaning failed, build a short reason string from metadata
+            # (e.g. first entry from preprocess_errors) and push it to
+            # processing_statuses.status via mark_processing_stage.
+            error_text = None
+            if not final_ok:
+                err_map = meta.get("preprocess_errors") or {}
+                if isinstance(err_map, dict) and err_map:
+                    # Only show the reason, not the specific file name, so
+                    # statuses look like "failed: Header not found ..." or
+                    # "failed: Missing required columns ...".
+                    _, first_err = next(iter(err_map.items()))
+                    error_text = str(first_err)
+                else:
+                    error_text = "file_cleaned failed (see metadata.json for details)"
+
             try:
                 mark_processing_stage(
                     directory_name=folder.name,
                     stage="file_cleaned",
-                    final_status=final_ok
+                    final_status=final_ok,
+                    error_message=error_text,
                 )
             except Exception as e:
                 print(f"[{folder.name}] stage warn (file_cleaned): {e}")

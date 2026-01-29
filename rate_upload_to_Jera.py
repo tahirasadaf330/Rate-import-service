@@ -25,7 +25,7 @@ KEY FUNCTIONS:
 • upload_to_jerasoft_bulk() - Handles bulk file upload to JeraSoft web interface
 """
 
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Any
 import re
 import pandas as pd
 import os
@@ -615,17 +615,43 @@ def bulk_import_rates(df: pd.DataFrame, table_id: int,
     # Closed handling is done via the 'value' column using the keyword "close".
     if 'Effective Date' in jera_df.columns:
         jera_df['effective_from'] = pd.to_datetime(jera_df['Effective Date']).dt.strftime('%Y-%m-%d')
-    
-    # Select only required columns for JeraSoft
-    required_cols = ['code_name', 'code', 'value', 'effective_from']
-    missing_cols = [col for col in required_cols if col not in jera_df.columns]
+
+    # Optionally map Billing Increment into the CSV using the
+    # billing_increment_format [grace_volume, pay_interval, min_volume].
+    # This allows JeraSoft to import the billing increment along with
+    # Code/Rate/Effective Date when the DataFrame includes
+    # 'New Billing Increment' (e.g. "60/60").
+    export_cols = ['code_name', 'code', 'value', 'effective_from']
+    if 'New Billing Increment' in jera_df.columns:
+        min_vols: list[Any] = []
+        pay_ints: list[Any] = []
+        grace_vols: list[Any] = []
+        for bi in jera_df['New Billing Increment']:
+            mv, pi = _parse_billing_increment(str(bi) if bi is not None else None)
+            # Grace volume is typically 0; leave blank when BI is invalid/empty.
+            if mv is None and pi is None:
+                grace_vols.append("")
+                min_vols.append("")
+                pay_ints.append("")
+            else:
+                grace_vols.append(0)
+                min_vols.append(mv if mv is not None else "")
+                pay_ints.append(pi if pi is not None else "")
+        jera_df['grace_volume'] = grace_vols
+        jera_df['pay_interval'] = pay_ints
+        jera_df['min_volume'] = min_vols
+        export_cols += ['grace_volume', 'pay_interval', 'min_volume']
+
+    # Ensure the core required columns exist
+    required_core = ['code_name', 'code', 'value', 'effective_from']
+    missing_cols = [col for col in required_core if col not in jera_df.columns]
     if missing_cols:
         raise ValueError(f"Missing required columns after mapping: {missing_cols}")
-    
-    export_df = jera_df[required_cols]
+
+    export_df = jera_df[export_cols]
     # Make sure the import settings column list matches what we export
     try:
-        default_settings["sheets"][0]["columns"] = list(required_cols)
+        default_settings["sheets"][0]["columns"] = list(export_cols)
     except Exception:
         pass
     

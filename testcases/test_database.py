@@ -383,8 +383,9 @@ class TestDatabaseModule(unittest.TestCase):
         mock_cursor.rowcount = 1
         # Valid stage, final_status True
         mark_processing_stage(directory_name='dir', stage='rate_uploaded', final_status=True)
-        # Valid stage, final_status False
+        # Valid stage, final_status False (with and without error message)
         mark_processing_stage(directory_name='dir', stage='rate_uploaded', final_status=False)
+        mark_processing_stage(directory_name='dir', stage='rate_uploaded', final_status=False, error_message='some reason')
         # Missing directory_name and internet_message_id
         with self.assertRaises(ValueError):
             mark_processing_stage(stage='rate_uploaded', final_status=True)
