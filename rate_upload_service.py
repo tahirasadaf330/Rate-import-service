@@ -81,22 +81,46 @@ def _safe_stem(filename: str, *, max_len: int = 120) -> str:
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-")
     return (stem or "vendor_file")[:max_len]
 
-def _pick_temp_csv_path_from_vendor_filename(vendor_filename: str) -> str:
+def _pick_temp_csv_path_from_vendor_filename(
+    vendor_filename: str,
+    imported_by_name: str | None = None,
+) -> str:
     """
-    Build a temp CSV path whose basename is just the vendor filename stem:
-      HAYOTEL-PREMIUM_A-Z-RN_01-13-2026.csv
+    Build a temp CSV path whose basename starts from the vendor filename stem,
+    and optionally appends the human-readable importer name after the .csv:
+
+      RN_..._HAYO_CLI_3_v31.csv--Super_Admin
+
     If it exists, add _v2/_v3/... to avoid collisions.
     """
     safe = _safe_stem(vendor_filename, max_len=120)
+    imported_safe: str | None = None
+    if imported_by_name:
+        imported_safe = _safe_stem(imported_by_name, max_len=60)
+        # Display importer name with a readable label in the filename.
+        # Note: Windows filenames cannot contain ':', so we omit it and use
+        # a space instead: e.g. --imported by (Super_Admin)
+        if imported_safe:
+            imported_safe = f"IMPORTED BY ({imported_safe})"
+
     tmp = Path(tempfile.gettempdir())
-    base = tmp / f"{safe}.csv"
+    # IMPORTANT: JeraSoft requires the real file extension to be .csv.
+    # So we keep .csv at the very end and insert the importer name
+    # before the extension, e.g.: RN_..._HAYO_CLI_3_v31--Super_Admin.csv
+    base_stem = safe if not imported_safe else f"{safe}--{imported_safe}"
+    base_name = f"{base_stem}.csv"
+    base = tmp / base_name
     if not base.exists():
         return str(base)
     for i in range(2, 51):
-        alt = tmp / f"{safe}_v{i}.csv"
+        alt_stem = f"{safe}_v{i}" if not imported_safe else f"{safe}_v{i}--{imported_safe}"
+        alt_name = f"{alt_stem}.csv"
+        alt = tmp / alt_name
         if not alt.exists():
             return str(alt)
-    return str(tmp / f"{safe}_{int(time.time())}.csv")
+    tail_stem = f"{safe}_{int(time.time())}" if not imported_safe else f"{safe}_{int(time.time())}--{imported_safe}"
+    tail_name = f"{tail_stem}.csv"
+    return str(tmp / tail_name)
 
 def export_db_upload_dataframe(
     df: pd.DataFrame,
@@ -136,14 +160,16 @@ def get_pending_bulk_uploads() -> List[Dict[str, Any]]:
     """Get rate_uploads marked for bulk upload."""
     sql = """
         SELECT 
-            id, subject, sender_email, jera_table_id,
-            jera_upload_status, jera_upload_result,
-            total_rows, created_at, comparison_file_path
-        FROM rate_uploads 
-        WHERE is_rate_approved_by_admin = TRUE 
-        AND jera_upload_status = 'pending_bulk'
-        AND jera_table_id IS NOT NULL
-        ORDER BY created_at ASC
+            ru.id, ru.subject, ru.sender_email, ru.jera_table_id,
+            ru.jera_upload_status, ru.jera_upload_result,
+            ru.total_rows, ru.created_at, ru.comparison_file_path,
+            u.name AS jera_imported_by_name
+        FROM rate_uploads ru
+        LEFT JOIN users u ON u.id::text = ru.jera_imported_by::text
+        WHERE ru.is_rate_approved_by_admin = TRUE 
+        AND ru.jera_upload_status = 'pending_bulk'
+        AND ru.jera_table_id IS NOT NULL
+        ORDER BY ru.created_at ASC
     """
     
     with get_conn() as conn, conn.cursor() as cur:
@@ -243,6 +269,7 @@ def process_bulk_upload(upload: Dict[str, Any], dry_run: bool = False) -> bool:
     upload_id = upload['id']
     table_id = upload['jera_table_id']
     comparison_file_path = upload.get("comparison_file_path")
+    imported_by_name = upload.get("jera_imported_by_name")
     
     print(f"\n🔄 Processing upload ID {upload_id}")
     print(f"   Subject: {upload['subject']}")
@@ -315,7 +342,7 @@ def process_bulk_upload(upload: Dict[str, Any], dry_run: bool = False) -> bool:
         temp_csv_path = None
         vendor_file = _pick_vendor_received_filename(str(comparison_file_path) if comparison_file_path else None)
         if vendor_file:
-            temp_csv_path = _pick_temp_csv_path_from_vendor_filename(vendor_file)
+            temp_csv_path = _pick_temp_csv_path_from_vendor_filename(vendor_file, imported_by_name)
 
         # If you want JeraSoft Import History to show "A-Z Stashed" like manual imports,
         # create an import template in JeraSoft with "Stash Future Rates" enabled and set:
