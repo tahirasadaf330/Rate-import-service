@@ -327,6 +327,24 @@ def process_one_folder(folder: Path) -> str:
     meta = load_metadata(folder)
     if not meta:
         return f"[{folder.name}] skip: no/invalid metadata.json"
+
+    # DB guard: skip failed dirs unless reprocessing is enabled; skip successful dirs.
+    # This prevents auto-retrying directories that already failed once.
+    try:
+        from database import get_processing_status
+
+        db_status = get_processing_status(directory_name=folder.name)
+        if db_status:
+            status = str(db_status.get("status") or "").strip().lower()
+            is_reprocessing_enabled = bool(db_status.get("is_reprocessing_enabled"))
+
+            if status.startswith("failed") and not is_reprocessing_enabled:
+                return f"[{folder.name}] skip: marked as failed (reprocessing disabled)"
+            if status == "success":
+                return f"[{folder.name}] already pushed"
+    except Exception:
+        # If DB check fails, keep going (don't block pipeline on DB issues).
+        pass
     # DB is source-of-truth for date format, based on vendor:
     # sender email -> vendor_contacts -> vendors.date_format
     vendor_fmt = None

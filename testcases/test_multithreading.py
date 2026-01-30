@@ -39,6 +39,11 @@ class TestMultithreading(unittest.TestCase):
         self._db_fmt_patcher.start()
         self.addCleanup(self._db_fmt_patcher.stop)
 
+        # Prevent unit tests from hitting a real DB (process_one_folder now checks processing_statuses).
+        self._db_status_patcher = patch("database.get_processing_status", return_value=None)
+        self._db_status_patcher.start()
+        self.addCleanup(self._db_status_patcher.stop)
+
         self.test_dir = Path(tempfile.mkdtemp())
         self.meta_path = self.test_dir / "metadata.json"
         self.meta_data = {
