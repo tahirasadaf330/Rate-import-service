@@ -699,7 +699,7 @@ class TestErrorHandling(unittest.TestCase):
         with self.assertRaises(ValueError) as context:
             detect_header_row(raw_data)
         
-        self.assertIn("Header not found", str(context.exception))
+        self.assertIn("Missing required canonical columns", str(context.exception))
     
     def test_canonicalize_headers_missing_columns(self):
         """Test header canonicalization with missing required columns."""
@@ -861,10 +861,38 @@ class TestRealFileProcessing(unittest.TestCase):
         self.assertIn('1002', dst_codes) 
         self.assertIn('1003', dst_codes)
         
-        print(f"✅ Sample file processing successful")
-        print(f"📂 Sample file created at: {sample_file_path}")
-        print(f"📂 Cleaned output at: {output_path}")
-        print(f"🔍 Expanded {len(sample_data)} rows to {len(cleaned_df)} rows")
+        print("Sample file processing successful")
+        print(f"Sample file created at: {sample_file_path}")
+        print(f"Cleaned output at: {output_path}")
+        print(f"Expanded {len(sample_data)} rows to {len(cleaned_df)} rows")
+
+    def test_load_clean_rates_drops_rows_with_missing_required_values(self):
+        """Rows missing any required field should be removed from the cleaned output."""
+        from preprocess_data import load_clean_rates
+
+        src_path = os.path.join(self.temp_dir, "with_missing_required.xlsx")
+        out_path = os.path.join(self.temp_dir, "with_missing_required_cleaned.xlsx")
+
+        df = pd.DataFrame({
+            "Dst Code": ["43", "", "44", "45", "46"],
+            "Rate": ["0.56", "0.10", "", "0.20", "0.30"],
+            "Effective Date": ["2026-01-21", "2026-01-21", "2026-01-21", "", "2026-01-21"],
+            "Billing Increment": ["1/1", "1/1", "1/1", "1/1", ""],
+        })
+        df.to_excel(src_path, index=False)
+
+        cleaned_df = load_clean_rates(
+            path=src_path,
+            output_path=out_path,
+            sheet=0,
+            date_format_email="AUTO",
+        )
+
+        self.assertEqual(len(cleaned_df), 1)
+        self.assertEqual(cleaned_df["Dst Code"].iloc[0], "43")
+        self.assertEqual(cleaned_df["Effective Date"].iloc[0], "2026-01-21")
+        self.assertEqual(cleaned_df["Billing Increment"].iloc[0], "1/1")
+        self.assertAlmostEqual(float(cleaned_df["Rate"].iloc[0]), 0.56, places=6)
 
     def test_load_clean_rates_preserves_dst_code_name_when_present(self):
         """If input contains a destination name column, cleaned output should keep it (vendor files too)."""

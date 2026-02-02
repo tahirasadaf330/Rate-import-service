@@ -820,6 +820,7 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
             'destination',
             'destinations',
             'destination name',
+            'destination country',
         ):
             column_to_canonical[c] = 'Dst Code Name'
             canonical_to_columns.setdefault('Dst Code Name', []).append(c)
@@ -1404,6 +1405,26 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
         .str.replace(r'\D+', '', regex=True)  # keep only 0-9
     )
 
+    # Drop rows that are incomplete: if ANY required field is empty/NaN/NaT.
+    # (User request: remove rows that are fully empty OR have even one empty value.)
+    missing_any = pd.Series(False, index=df.index)
+    for col in REQUIRED_COLS:
+        if col not in df.columns:
+            continue
+        s = df[col]
+        col_missing = s.isna()
+        # treat blank strings and common stringified nulls as missing too
+        try:
+            t = s.astype(str).str.strip().str.lower()
+            col_missing = col_missing | t.eq("") | t.eq("nan") | t.eq("none") | t.eq("nat")
+        except Exception:
+            pass
+        missing_any = missing_any | col_missing
+
+    if missing_any.any():
+        df = df.loc[~missing_any].copy()
+        df.reset_index(drop=True, inplace=True)
+
 
     # finally, write the cleaned sheet
     out_path, writer_kwargs = _normalize_excel_writer_path(output_path)
@@ -1411,10 +1432,10 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\HAYOINCC1872151520260128150511.csv"
-    OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\cleaned.xlsx"
+    PATH = r"testfiles\MEDIATEL_RATES.xlsx"
+    OUT_PATH = r"testfiles\MEDIATEL_RATES_cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
-    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='YYYY-MMM-DD')
+    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='DD-MM-YYYY')
    
     print('✅ Cleaned and saved.')

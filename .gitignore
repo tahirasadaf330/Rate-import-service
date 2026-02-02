@@ -1,4 +1,5 @@
 failed_subjects.json
+testfiles/
 .venv312/
 failed_emails.json
 attachments/
