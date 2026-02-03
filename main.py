@@ -17,7 +17,12 @@ then preprocess all the files
 from multithreading import run_pipeline_mt
 from email_verification import verify_fetch_emails
 from pathlib import Path
-from database import push_failed_emails_json_to_db, fetch_approved_unprocessed_paths_map
+from database import (
+    push_failed_emails_json_to_db,
+    fetch_approved_unprocessed_paths_map,
+    backfill_ingest_files_jera_table_from_metadata,
+    ensure_internet_message_id_links,
+)
 from datetime import date, datetime, timezone
 from date_verification import  ingest_files_for_manual_date, mark_date_verification_ingestion
 from database_flag import seed_processing_status_rows, finalize_processed_flags
@@ -41,6 +46,12 @@ if __name__ == "__main__":
     verify_fetch_emails(after, before, unread_only)
     seed_processing_status_rows("attachments")
 
+    # Make sure FK links on internet_message_id are in place before inserting ingest/rate rows
+    try:
+        ensure_internet_message_id_links()
+    except Exception as e:
+        print(f"[MAIN] warn: could not ensure internet_message_id links: {e}")
+
     ingest_files_for_manual_date("attachments")
 
     valid_paths = fetch_approved_unprocessed_paths_map()
@@ -50,6 +61,13 @@ if __name__ == "__main__":
     push_failed_emails_json_to_db("failed_emails.json")  
     
     run_pipeline_mt("attachments", max_workers=3)
+
+    # After JeraSoft tables are resolved and metadata is updated, backfill
+    # the human-readable table name into ingest_files.jera_table.
+    try:
+        backfill_ingest_files_jera_table_from_metadata()
+    except Exception as e:
+        print(f"[MAIN] warn: could not backfill jera_table from metadata: {e}")
 
     finalize_processed_flags(valid_paths)
 

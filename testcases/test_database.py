@@ -143,6 +143,9 @@ class TestDatabaseModule(unittest.TestCase):
         # Use an authorized sender email from VERIFIED_SENDERS
         result = insert_rejected_email('rates@saifglobal.net', 'subj', 'cat', 'notes', None, None)
         self.assertEqual(result, 1)
+        # With internet_message_id
+        result = insert_rejected_email('rates@saifglobal.net', 'subj', 'cat', 'notes', None, None, 'msg-id')
+        self.assertEqual(result, 1)
         # Test missing category (should return 1, not None)
         result = insert_rejected_email('rates@saifglobal.net', 'subj', None, 'notes', None, None)
         self.assertEqual(result, 1)
@@ -159,8 +162,8 @@ class TestDatabaseModule(unittest.TestCase):
             encoding = 'utf-8'
         mock_cursor.connection = Conn()
         rows = [
-            {"sender_email": "a@b.com", "subject": "subj", "category": "cat", "notes": "n", "received_at": None, "processed_at": None},
-            {"sender_email": "b@c.com", "subject": "subj2", "category": "cat2", "notes": "n2", "received_at": None, "processed_at": None}
+            {"sender_email": "a@b.com", "subject": "subj", "category": "cat", "notes": "n", "received_at": None, "processed_at": None, "internet_message_id": "mid-1"},
+            {"sender_email": "b@c.com", "subject": "subj2", "category": "cat2", "notes": "n2", "received_at": None, "processed_at": None, "internet_message_id": "mid-2"}
         ]
         with patch('psycopg2.extras.execute_values', mock_execute_values):
             insert_rejected_emails(rows)
@@ -189,9 +192,20 @@ class TestDatabaseModule(unittest.TestCase):
         import tempfile, json, os
         # Valid JSON file with new entries
         with tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8') as tf:
-            json.dump({"buckets": {"cat": [{"sender": "a@b.com", "subject": "subj", "already_pushed": False, "receivedDateTime": "2025-09-28T12:34:56Z", "logged_at_utc": "2025-09-28T12:34:56Z", "details": {"info": "x"}}]}}, tf)
+            json.dump({"buckets": {"cat": [{"sender": "a@b.com", "subject": "subj", "already_pushed": False,
+                                               "receivedDateTime": "2025-09-28T12:34:56Z",
+                                               "logged_at_utc": "2025-09-28T12:34:56Z",
+                                               "internetMessageId": "msg-id-1",
+                                               "details": {"info": "x"}}]}}, tf)
             tf.close()
-            push_failed_emails_json_to_db(tf.name)
+            with patch('database.insert_rejected_emails') as mock_insert:
+                mock_insert.return_value = [1]
+                push_failed_emails_json_to_db(tf.name)
+                mock_insert.assert_called_once()
+                rows_arg = mock_insert.call_args[0][0]
+                self.assertIsInstance(rows_arg, list)
+                self.assertGreater(len(rows_arg), 0)
+                self.assertEqual(rows_arg[0].get("internet_message_id"), "msg-id-1")
             os.remove(tf.name)
         # JSON file missing
         self.assertEqual(push_failed_emails_json_to_db('notfound.json'), (0,0,0))
@@ -222,6 +236,8 @@ class TestDatabaseModule(unittest.TestCase):
         insert_rate_upload(sender_email=None, subject=None, totals=None, jera_table_id=None, comparison_file_path=None)
         # Invalid totals
         insert_rate_upload(sender_email='a@b.com', subject='subj', totals={'bad': 1}, jera_table_id=1, comparison_file_path='file.csv')
+        # With internet_message_id
+        insert_rate_upload(sender_email='a@b.com', subject='subj', totals={'total_rows': 1}, jera_table_id=1, comparison_file_path='file.csv', internet_message_id='msg-id')
 
     @patch('database.get_conn')
     @patch('database.execute_values', return_value=[(1,)])
@@ -275,7 +291,7 @@ class TestDatabaseModule(unittest.TestCase):
         mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
         mock_cursor.fetchone.return_value = [1]
         # All valid
-        insert_or_update_ingest_file(email_address='a@b.com', subject='subj', received_at=datetime.now(), processed_at=datetime.now(), file_path='file.csv', preview_cache={'a':1}, error_message=None, status='pending', date_format='fmt', approved_at=None, is_format_auto_detected=True)
+        insert_or_update_ingest_file(email_address='a@b.com', subject='subj', received_at=datetime.now(), processed_at=datetime.now(), file_path='file.csv', internet_message_id='msg-id', preview_cache={'a':1}, error_message=None, status='pending', date_format='fmt', approved_at=None, is_format_auto_detected=True)
         # Some None
         insert_or_update_ingest_file(email_address=None, subject=None, received_at=None, processed_at=None, file_path='file.csv')
         # file_path missing
@@ -294,8 +310,8 @@ class TestDatabaseModule(unittest.TestCase):
             mock_get_conn.return_value.__enter__.return_value = mock_conn
             mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
             rows = [
-                {"email_address": "a@b.com", "subject": "subj", "received_at": None, "processed_at": None, "file_path": "f1", "preview_cache": None, "error_message": None},
-                {"email_address": "b@c.com", "subject": "subj2", "received_at": None, "processed_at": None, "file_path": "f2", "preview_cache": None, "error_message": None}
+                {"email_address": "a@b.com", "subject": "subj", "received_at": None, "processed_at": None, "file_path": "f1", "internet_message_id": "mid-1", "preview_cache": None, "error_message": None},
+                {"email_address": "b@c.com", "subject": "subj2", "received_at": None, "processed_at": None, "file_path": "f2", "internet_message_id": "mid-2", "preview_cache": None, "error_message": None}
             ]
             bulk_upsert_ingest_files(rows)
             self.assertEqual(bulk_upsert_ingest_files([]), 0)
@@ -373,22 +389,74 @@ class TestDatabaseModule(unittest.TestCase):
         with self.assertRaises(ValueError):
             ensure_row_by_directory(directory_name='dir3')
 
+    @patch('database.upsert_rejected_email_from_processing_failure')
     @patch('database.get_conn')
-    def test_mark_processing_stage_cases(self, mock_get_conn):
+    def test_mark_processing_stage_cases(self, mock_get_conn, mock_upsert):
         from database import mark_processing_stage
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_get_conn.return_value.__enter__.return_value = mock_conn
         mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
         mock_cursor.rowcount = 1
-        # Valid stage, final_status True
+        # When a row is marked failed, processing_statuses is selected and
+        # upsert_rejected_email_from_processing_failure is called with context.
+        mock_cursor.fetchone.return_value = ('msg-id', 'a@b.com', 'subj', datetime.now())
+
+        # Valid stage, final_status True (no rejected_emails sync)
         mark_processing_stage(directory_name='dir', stage='rate_uploaded', final_status=True)
+        self.assertFalse(mock_upsert.called)
+
         # Valid stage, final_status False (with and without error message)
         mark_processing_stage(directory_name='dir', stage='rate_uploaded', final_status=False)
         mark_processing_stage(directory_name='dir', stage='rate_uploaded', final_status=False, error_message='some reason')
+        self.assertTrue(mock_upsert.called)
+
         # Missing directory_name and internet_message_id
         with self.assertRaises(ValueError):
             mark_processing_stage(stage='rate_uploaded', final_status=True)
+
+    @patch('database.get_conn')
+    def test_backfill_ingest_files_jera_table_from_metadata_cases(self, mock_get_conn):
+        from database import backfill_ingest_files_jera_table_from_metadata
+        import tempfile, json, os, shutil
+
+        # Prepare a temporary folder with metadata.json
+        temp_dir = tempfile.mkdtemp()
+        try:
+            file_path = os.path.join(temp_dir, 'file.csv')
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write('')
+            meta_path = os.path.join(temp_dir, 'metadata.json')
+            with open(meta_path, 'w', encoding='utf-8') as f:
+                json.dump({"best_table_name": "TEST_TABLE"}, f)
+
+            mock_conn = MagicMock()
+            mock_cursor = MagicMock()
+            mock_get_conn.return_value.__enter__.return_value = mock_conn
+            mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+            # First connection (ALTER TABLE) ignores fetchall.
+            # Second connection: SELECT ingest_files rows to backfill.
+            mock_cursor.fetchall.return_value = [(1, file_path)]
+            mock_cursor.rowcount = 1
+
+            updated = backfill_ingest_files_jera_table_from_metadata()
+            self.assertGreaterEqual(updated, 1)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    @patch('database.get_conn')
+    def test_ensure_internet_message_id_links_cases(self, mock_get_conn):
+        from database import ensure_internet_message_id_links
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_get_conn.return_value.__enter__.return_value = mock_conn
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+        ensure_internet_message_id_links()
+
+        # At least one ALTER statement should have been attempted
+        self.assertTrue(mock_cursor.execute.called)
 
     @patch('database.get_conn')
     def test_get_processing_status_cases(self, mock_get_conn):

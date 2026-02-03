@@ -207,6 +207,12 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
         received_at = _parse_iso_utc_dt(meta.get("receivedDateTime_raw"))
         processed_at = _parse_iso_utc_dt(meta.get("processed_at_utc"))
         file_path = str(fpath)
+        internet_message_id = str(
+            meta.get("internet_message_id")
+            or meta.get("internetMessageId")
+            or meta.get("message_id")
+            or ""
+        ).strip() or None
 
         # Optional DB flags when:
         # - sender_fmt exists (DB-first) -> treat as approved using that format
@@ -234,6 +240,7 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
                 received_at=received_at,
                 processed_at=processed_at,
                 file_path=file_path,
+                internet_message_id=internet_message_id,
                 preview_cache=preview_cache,
                 error_message=error_message,
                 **upsert_kwargs,  # only applies if autodetected True

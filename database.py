@@ -48,10 +48,12 @@ def insert_rejected_email(
     notes: Optional[str],
     received_at: Optional[datetime],
     processed_at: Optional[datetime],
+    internet_message_id: Optional[str] = None,
 ) -> int:
     """
     Insert a single rejected email row and return its id.
     Table columns (managed by DB): id (PK), created_at, updated_at auto.
+    Also supports optional internet_message_id for traceability.
     """
     from valid_emails import get_verified_senders
     # Only insert if sender is authorized
@@ -60,14 +62,14 @@ def insert_rejected_email(
         return -1  # or handle as needed
     sql = """
         INSERT INTO rejected_emails
-        (sender_email, subject, category, notes, received_at, processed_at, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+        (sender_email, subject, category, notes, received_at, processed_at, internet_message_id, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         RETURNING id;
     """
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             sql,
-            (sender_email, subject, category, notes, received_at, processed_at),
+            (sender_email, subject, category, notes, received_at, processed_at, internet_message_id),
         )
         new_id = cur.fetchone()[0]
         conn.commit()
@@ -78,13 +80,14 @@ def insert_rejected_emails(rows: Iterable[Mapping[str, Any]]) -> List[int]:
     """
     Bulk-insert multiple rejected email rows and return list of new ids in the same order.
 
-    `rows` should be an iterable of mappings with keys:
-      - sender_email (Optional[str])
-      - subject (Optional[str])
-      - category (str)                # required
-      - notes (Optional[str])
-      - received_at (Optional[datetime])
-      - processed_at (Optional[datetime])
+        `rows` should be an iterable of mappings with keys:
+            - sender_email (Optional[str])
+            - subject (Optional[str])
+            - category (str)                # required
+            - notes (Optional[str])
+            - received_at (Optional[datetime])
+            - processed_at (Optional[datetime])
+            - internet_message_id (Optional[str])
 
     Returns: list of inserted ids (may be empty).
     """
@@ -108,6 +111,7 @@ def insert_rejected_emails(rows: Iterable[Mapping[str, Any]]) -> List[int]:
             r.get("notes"),
             r.get("received_at"),
             r.get("processed_at"),
+            r.get("internet_message_id"),
         ))
 
     if not values:
@@ -121,15 +125,15 @@ def insert_rejected_emails(rows: Iterable[Mapping[str, Any]]) -> List[int]:
 
     sql = """
         INSERT INTO rejected_emails
-        (sender_email, subject, category, notes, received_at, processed_at, created_at, updated_at)
+        (sender_email, subject, category, notes, received_at, processed_at, internet_message_id, created_at, updated_at)
         VALUES %s
         RETURNING id;
     """
 
     with get_conn() as conn, conn.cursor() as cur:
         # execute_values will expand the VALUES %s placeholder into many tuples
-        # Template to match the 8 columns (6 data + 2 timestamps)
-        template = "(%s,%s,%s,%s,%s,%s,NOW(),NOW())"
+        # Template to match the 9 columns (7 data + 2 timestamps)
+        template = "(%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())"
         execute_values(cur, sql, values, template=template, page_size=100)
         ids = [row[0] for row in cur.fetchall()]
         conn.commit()
@@ -152,6 +156,7 @@ def insert_rejected_email_row(
     notes: Optional[str],
     received_at: Optional[datetime],
     processed_at: Optional[datetime],
+    internet_message_id: Optional[str] = None,
 ) -> int:
     """
     Insert a single row into rejected_emails and return its id.
@@ -165,22 +170,97 @@ def insert_rejected_email_row(
         notes TEXT,
         received_at TIMESTAMPTZ,
         processed_at TIMESTAMPTZ,
+                internet_message_id TEXT,
       )
     """
     sql = """
         INSERT INTO rejected_emails
-          (sender_email, subject, category, notes, received_at, processed_at)
-        VALUES (%s, %s, %s, %s, %s, %s)
+                    (sender_email, subject, category, notes, received_at, processed_at, internet_message_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
         RETURNING id;
     """
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            sql,
-            (sender_email, subject, category, notes, received_at, processed_at),
+                        sql,
+                        (sender_email, subject, category, notes, received_at, processed_at, internet_message_id),
         )
         new_id = cur.fetchone()[0]
         conn.commit()
         return new_id
+
+
+def upsert_rejected_email_from_processing_failure(
+    *,
+    stage: "ProcessingStage | str",
+    status_text: str,
+    internet_message_id: Optional[str],
+    sender_email: Optional[str],
+    email_subject: Optional[str],
+    email_received_at: Optional[datetime],
+) -> Optional[int]:
+    """Update or insert a rejected_emails row for a failed processing_statuses entry.
+
+    If a row already exists for this internet_message_id, update its
+    category/notes/processed_at to reflect the latest failure reason.
+    Otherwise insert a new rejected_emails row.
+    """
+    category = str(stage)
+    notes = status_text
+    processed_at = datetime.utcnow()
+
+    # If we don't have a message id, just fall back to a simple insert.
+    if not internet_message_id:
+        try:
+            return insert_rejected_email(
+                sender_email=sender_email,
+                subject=email_subject,
+                category=category,
+                notes=notes,
+                received_at=email_received_at,
+                processed_at=processed_at,
+                internet_message_id=None,
+            )
+        except Exception as e:
+            print(f"[rejected_emails] warn: failed to insert without internet_message_id: {e}")
+            return None
+
+    # First try to update any existing row(s) for this internet_message_id.
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE rejected_emails
+                   SET category = %s,
+                       notes = %s,
+                       processed_at = %s,
+                       updated_at = NOW()
+                 WHERE internet_message_id = %s
+                 RETURNING id;
+                """,
+                (category, notes, processed_at, internet_message_id),
+            )
+            row = cur.fetchone()
+            if row:
+                conn.commit()
+                return row[0]
+            conn.commit()
+    except Exception as e:
+        print(f"[rejected_emails] warn: failed to update by internet_message_id={internet_message_id}: {e}")
+
+    # No existing row; insert a fresh one.
+    try:
+        return insert_rejected_email(
+            sender_email=sender_email,
+            subject=email_subject,
+            category=category,
+            notes=notes,
+            received_at=email_received_at,
+            processed_at=processed_at,
+            internet_message_id=internet_message_id,
+        )
+    except Exception as e:
+        print(f"[rejected_emails] warn: failed to insert after update miss for internet_message_id={internet_message_id}: {e}")
+        return None
 
 def push_failed_emails_json_to_db(path: Optional[str | Path] = None) -> tuple[int, int, int]:
     """
@@ -198,6 +278,17 @@ def push_failed_emails_json_to_db(path: Optional[str | Path] = None) -> tuple[in
     if not json_path.exists():
         print(f"(info) {json_path} not found; nothing to push.")
         return (0, 0, 0)
+
+    # Ensure rejected_emails has internet_message_id column (safe to call many times).
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            try:
+                cur.execute("ALTER TABLE rejected_emails ADD COLUMN IF NOT EXISTS internet_message_id TEXT;")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+    except Exception as e:
+        print(f"(warn) could not ensure rejected_emails.internet_message_id column exists: {e}")
 
     try:
         with open(json_path, "r", encoding="utf-8") as f:
@@ -235,6 +326,15 @@ def push_failed_emails_json_to_db(path: Optional[str | Path] = None) -> tuple[in
             received_at = _parse_iso_utc(entry.get("receivedDateTime"))
             processed_at = _parse_iso_utc(entry.get("logged_at_utc"))
 
+            # Internet message id, if available, for better traceability.
+            raw_msg_id = entry.get("internetMessageId") or entry.get("internet_message_id")
+            if isinstance(raw_msg_id, str):
+                internet_message_id = raw_msg_id.strip() or None
+            elif raw_msg_id is None:
+                internet_message_id = None
+            else:
+                internet_message_id = str(raw_msg_id)
+
             # Build a compact notes string that does not restate the category itself.
             details = entry.get("details")
             if details is None:
@@ -253,6 +353,7 @@ def push_failed_emails_json_to_db(path: Optional[str | Path] = None) -> tuple[in
                 "notes": notes,
                 "received_at": received_at,
                 "processed_at": processed_at,
+                "internet_message_id": internet_message_id,
             })
             entry_refs.append(entry)
 
@@ -307,6 +408,7 @@ def push_failed_emails_json_to_db(path: Optional[str | Path] = None) -> tuple[in
                         notes=row["notes"],
                         received_at=row["received_at"],
                         processed_at=row["processed_at"],
+                        internet_message_id=row.get("internet_message_id"),
                     )
                 except NameError:
                     # insert_rejected_email not defined, try bulk function for single row
@@ -331,12 +433,13 @@ def insert_rate_upload(
     totals: Optional[Dict[str, int]] = None,
     jera_table_id: Optional[int] = None,
     comparison_file_path: Optional[str] = None,
+    internet_message_id: Optional[str] = None,
 ) -> int:
     """
     Insert one row into rate_uploads with summary counters.
 
-    rate_uploads columns covered:
-      subject, sender_email, received_at, processed_at,
+        rate_uploads columns covered:
+            subject, sender_email, received_at, processed_at, internet_message_id,
       total_rows, new, increase, decrease, unchanged, closed,
       backdated_increase, backdated_decrease, billing_increment_changes,
       comparison_file_path
@@ -358,12 +461,12 @@ def insert_rate_upload(
 
     sql = """
         INSERT INTO rate_uploads
-        (subject, sender_email, received_at, processed_at,
+        (subject, sender_email, received_at, processed_at, internet_message_id,
          total_rows, "new", increase, decrease, unchanged, closed, stashed,
          backdated_increase, backdated_decrease, billing_increment_changes,
          jera_table_id, comparison_file_path, created_at, updated_at)
         VALUES
-        (%s, %s, COALESCE(%s, NOW()), %s,
+        (%s, %s, COALESCE(%s, NOW()), %s, %s,
          %s, %s, %s, %s, %s, %s, %s,
          %s, %s, %s, %s, %s,
          NOW(), NOW())
@@ -378,6 +481,7 @@ def insert_rate_upload(
                 sender_email,
                 received_at,
                 processed_at,
+                internet_message_id,
                 t["total_rows"],
                 t["new"],
                 t["increase"],
@@ -593,6 +697,7 @@ def insert_or_update_ingest_file(
     received_at: Optional[datetime],
     processed_at: Optional[datetime],
     file_path: str,
+    internet_message_id: Optional[str] = None,
     preview_cache: Optional[Dict[str, Any]] = None,
     error_message: Optional[str] = None,
     # new optional fields
@@ -604,10 +709,11 @@ def insert_or_update_ingest_file(
     """
     Upsert a single row into ingest_files keyed by unique(file_path).
 
-    Columns written:
-      email_address, subject, received_at, processed_at, file_path,
-      preview_cache, error_message,
-      status, date_format, approved_at, is_format_auto_detected
+        Columns written:
+            email_address, subject, received_at, processed_at, file_path,
+            internet_message_id,
+            preview_cache, error_message,
+            status, date_format, approved_at, is_format_auto_detected
     """
     if not file_path:
         raise ValueError("file_path is required")
@@ -628,6 +734,7 @@ def insert_or_update_ingest_file(
             received_at,
             processed_at,
             file_path,
+            internet_message_id,
             preview_cache,
             error_message,
             status,
@@ -643,6 +750,7 @@ def insert_or_update_ingest_file(
             %(received_at)s,
             %(processed_at)s,
             %(file_path)s,
+            %(internet_message_id)s,
             %(preview_cache)s,
             %(error_message)s,
             %(status)s,
@@ -657,6 +765,7 @@ def insert_or_update_ingest_file(
             subject                 = EXCLUDED.subject,
             received_at             = EXCLUDED.received_at,
             processed_at            = EXCLUDED.processed_at,
+            internet_message_id     = EXCLUDED.internet_message_id,
             preview_cache           = EXCLUDED.preview_cache,
             error_message           = EXCLUDED.error_message,
             status                  = EXCLUDED.status,
@@ -673,6 +782,7 @@ def insert_or_update_ingest_file(
         "received_at": received_at,
         "processed_at": processed_at,
         "file_path": file_path,
+        "internet_message_id": internet_message_id,
         "preview_cache": Json(preview_cache) if preview_cache is not None else None,
         "error_message": error_message,
         "status": status,
@@ -713,6 +823,7 @@ def bulk_upsert_ingest_files(
             r.get("received_at"),
             r.get("processed_at"),
             fp,
+            r.get("internet_message_id"),
             Json(r.get("preview_cache")) if r.get("preview_cache") is not None else None,
             r.get("error_message"),
         ))
@@ -727,6 +838,7 @@ def bulk_upsert_ingest_files(
             received_at,
             processed_at,
             file_path,
+            internet_message_id,
             preview_cache,
             error_message,
             created_at,
@@ -742,7 +854,7 @@ def bulk_upsert_ingest_files(
             error_message = EXCLUDED.error_message,
             updated_at    = NOW()
     """
-    tpl = "(%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())"
+    tpl = "(%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())"
 
     with get_conn() as conn, conn.cursor() as cur:
         execute_values(cur, sql, prepared, template=tpl, page_size=page_size)
@@ -783,6 +895,143 @@ def fetch_approved_unprocessed_paths_map(limit: Optional[int] = None) -> Dict[st
         if file_path not in out:  # keep the earliest one if duplicates
             out[file_path] = date_format
     return out
+
+
+def backfill_ingest_files_jera_table_from_metadata(limit: Optional[int] = None) -> int:
+    """Create/populate ingest_files.jera_table from attachment metadata.
+
+    - Ensures ingest_files has a TEXT column named jera_table.
+        - For each row where jera_table is NULL/empty and file_path is set,
+            and received_at is today or newer,
+      reads the neighbouring metadata.json and copies the JeraSoft table name
+      (best_table_name or force_jerasoft_table_name) into jera_table.
+
+    Returns: number of rows updated.
+    """
+    # 1) Ensure the column exists (safe to call many times).
+    with get_conn() as conn, conn.cursor() as cur:
+        try:
+            cur.execute("ALTER TABLE ingest_files ADD COLUMN IF NOT EXISTS jera_table TEXT;")
+            conn.commit()
+        except Exception:
+            # For older PostgreSQL without IF NOT EXISTS, ignore errors if column exists.
+            conn.rollback()
+
+    # 2) Backfill jera_table from metadata.json next to file_path.
+    updated = 0
+    with get_conn() as conn, conn.cursor() as cur:
+        base_sql = """
+                        SELECT id, file_path
+                            FROM ingest_files
+                         WHERE (jera_table IS NULL OR jera_table = '')
+                             AND file_path IS NOT NULL
+                             AND file_path <> ''
+                             AND received_at >= CURRENT_DATE
+        """
+        sql = base_sql + (" LIMIT %s" if limit is not None else "")
+
+        if limit is not None:
+            cur.execute(sql, (limit,))
+        else:
+            cur.execute(sql)
+
+        rows = cur.fetchall()
+
+        from pathlib import Path
+        import json as _json
+
+        for rid, file_path in rows:
+            try:
+                folder = Path(file_path).parent
+                meta_path = folder / "metadata.json"
+                if not meta_path.exists():
+                    continue
+
+                try:
+                    with meta_path.open("r", encoding="utf-8") as f:
+                        meta = _json.load(f) or {}
+                except Exception:
+                    continue
+
+                table_name = meta.get("best_table_name") or meta.get("force_jerasoft_table_name")
+                if not table_name:
+                    continue
+
+                cur.execute(
+                    "UPDATE ingest_files SET jera_table = %s, updated_at = NOW() WHERE id = %s",
+                    (str(table_name), rid),
+                )
+                if cur.rowcount > 0:
+                    updated += cur.rowcount
+            except Exception as e:
+                print(f"⚠️ backfill_ingest_files_jera_table_from_metadata: id={rid} path={file_path} error={e}")
+
+        conn.commit()
+
+    if updated:
+        print(f"🔄 Backfilled jera_table for {updated} ingest_files row(s) from metadata.json")
+    else:
+        print("ℹ️ No ingest_files rows needed jera_table backfill")
+
+    return updated
+
+
+def ensure_internet_message_id_links() -> None:
+    """Ensure ingest_files and rate_uploads have internet_message_id columns and FKs.
+
+    - Adds ingest_files.internet_message_id TEXT and a foreign key to
+      processing_statuses(internet_message_id).
+    - Adds rate_uploads.internet_message_id TEXT and a foreign key to
+      processing_statuses(internet_message_id).
+
+    Safe to call many times; errors from existing columns/constraints are ignored.
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        # ingest_files.internet_message_id column
+        try:
+            cur.execute("ALTER TABLE ingest_files ADD COLUMN IF NOT EXISTS internet_message_id TEXT;")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+        # ingest_files FK
+        try:
+            cur.execute(
+                """
+                ALTER TABLE ingest_files
+                ADD CONSTRAINT ingest_files_internet_message_id_fkey
+                FOREIGN KEY (internet_message_id)
+                REFERENCES processing_statuses (internet_message_id)
+                ON UPDATE CASCADE
+                ON DELETE SET NULL;
+                """
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+        # rate_uploads.internet_message_id column
+        try:
+            cur.execute("ALTER TABLE rate_uploads ADD COLUMN IF NOT EXISTS internet_message_id TEXT;")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+        # rate_uploads FK
+        try:
+            cur.execute(
+                """
+                ALTER TABLE rate_uploads
+                ADD CONSTRAINT rate_uploads_internet_message_id_fkey
+                FOREIGN KEY (internet_message_id)
+                REFERENCES processing_statuses (internet_message_id)
+                ON UPDATE CASCADE
+                ON DELETE SET NULL;
+                """
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
 
 def mark_ingest_processed(file_paths: Iterable[str], processed: bool = True) -> int:
     """
@@ -983,8 +1232,33 @@ def mark_processing_stage(
         # Parameter order: first status_text for SET, then WHERE key(s).
         args = (status_text,) + where_key_args
         with get_conn() as conn, conn.cursor() as cur:
+            # First, update processing_statuses
             cur.execute(sql, args)
             affected = cur.rowcount
+
+            # If at least one row was marked failed, also sync to rejected_emails
+            if affected > 0:
+                # Fetch minimal context for the failed row
+                cur.execute(
+                    f"SELECT internet_message_id, sender_email, email_subject, email_received_at FROM processing_statuses WHERE {where_key_sql}",
+                    where_key_args,
+                )
+                row = cur.fetchone()
+                if row:
+                    internet_message_id, sender_email, email_subject, email_received_at = row
+                    try:
+                        upsert_rejected_email_from_processing_failure(
+                            stage=stage,
+                            status_text=status_text,
+                            internet_message_id=internet_message_id,
+                            sender_email=sender_email,
+                            email_subject=email_subject,
+                            email_received_at=email_received_at,
+                        )
+                    except Exception as re_exc:
+                        # Don't break main flow if rejected_emails sync fails
+                        print(f"[processing_statuses] warn: failed to sync rejected_emails for {where_key_sql}: {re_exc}")
+
             conn.commit()
             return affected
 
