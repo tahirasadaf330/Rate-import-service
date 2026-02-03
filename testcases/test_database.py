@@ -198,14 +198,33 @@ class TestDatabaseModule(unittest.TestCase):
                                                "internetMessageId": "msg-id-1",
                                                "details": {"info": "x"}}]}}, tf)
             tf.close()
-            with patch('database.insert_rejected_emails') as mock_insert:
-                mock_insert.return_value = [1]
+            with patch('database.insert_rejected_email') as mock_insert:
+                mock_insert.return_value = 1
                 push_failed_emails_json_to_db(tf.name)
                 mock_insert.assert_called_once()
-                rows_arg = mock_insert.call_args[0][0]
-                self.assertIsInstance(rows_arg, list)
-                self.assertGreater(len(rows_arg), 0)
-                self.assertEqual(rows_arg[0].get("internet_message_id"), "msg-id-1")
+                self.assertEqual(mock_insert.call_args.kwargs.get("internet_message_id"), "msg-id-1")
+
+            # JSON entry should only be marked after a successful insert
+            with open(tf.name, "r", encoding="utf-8") as f:
+                updated = json.load(f)
+            self.assertTrue(updated["buckets"]["cat"][0].get("already_pushed"))
+            os.remove(tf.name)
+
+        # Insert failure should NOT mark already_pushed (so it can retry)
+        with tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8') as tf:
+            json.dump({"buckets": {"cat": [{"sender": "a@b.com", "subject": "subj", "already_pushed": False,
+                                               "receivedDateTime": "2025-09-28T12:34:56Z",
+                                               "logged_at_utc": "2025-09-28T12:34:56Z",
+                                               "internetMessageId": "msg-id-2",
+                                               "details": {"info": "x"}}]}}, tf)
+            tf.close()
+            with patch('database.insert_rejected_email', side_effect=Exception("db down")):
+                res = push_failed_emails_json_to_db(tf.name)
+                self.assertGreaterEqual(res[2], 1)
+
+            with open(tf.name, "r", encoding="utf-8") as f:
+                updated = json.load(f)
+            self.assertFalse(bool(updated["buckets"]["cat"][0].get("already_pushed")))
             os.remove(tf.name)
         # JSON file missing
         self.assertEqual(push_failed_emails_json_to_db('notfound.json'), (0,0,0))

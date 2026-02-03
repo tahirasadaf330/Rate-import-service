@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "last_updated_utc": null,
+  "totals": {
+    "unverified_sender": 0,
+    "subject_invalid": 0,
+    "no_attachments": 0,
+    "no_valid_attachments": 0,
+    "all": 0
+  },
+  "buckets": {
+    "unverified_sender": [],
+    "subject_invalid": [],
+    "no_attachments": [],
+    "no_valid_attachments": []
+  }
+}

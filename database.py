@@ -265,11 +265,10 @@ def upsert_rejected_email_from_processing_failure(
 def push_failed_emails_json_to_db(path: Optional[str | Path] = None) -> tuple[int, int, int]:
     """
     Read failed_emails.json and insert any entries not yet pushed (no 'already_pushed': true)
-    into the rejected_emails table using a bulk insert.
+    into the rejected_emails table.
 
-    To avoid duplicate DB inserts if the JSON write fails, we now:
-      1) Mark entries as already_pushed and write JSON FIRST
-      2) THEN insert into DB
+    Entries are marked as already_pushed ONLY after a successful DB insert, so
+    failures (or sender-authorization skips) can retry on later runs.
 
     Returns:
         (inserted_count, skipped_already_pushed, errors)
@@ -363,67 +362,48 @@ def push_failed_emails_json_to_db(path: Optional[str | Path] = None) -> tuple[in
         return (0, skipped, errors)
 
     # ─────────────────────────────────────────────────────────
-    # 1) Mark all referenced entries as already_pushed IN MEMORY
+    # 1) Insert into DB (row-by-row)
     # ─────────────────────────────────────────────────────────
-    for entry in entry_refs:
-        entry["already_pushed"] = True
+    # NOTE: mark already_pushed only after a successful DB insert.
 
     # ─────────────────────────────────────────────────────────
-    # 2) Persist the updated JSON BEFORE touching the database
-    #    If this fails, we abort to avoid duplicate DB inserts
+    # 2) Persist the updated JSON AFTER successful inserts
+    #    If this fails, entries will retry on the next run.
     # ─────────────────────────────────────────────────────────
-    try:
-        _atomic_write_json(json_path, data)
-    except Exception as e:
-        errors += 1
-        print(f"(warn) failed to update {json_path} before DB insert: {e}")
-        print("(warn) aborting rejected_emails DB insert to avoid duplicates on next run")
-        return (0, skipped, errors)
+    marked = 0
+    for row, entry in zip(rows_to_insert, entry_refs):
+        try:
+            new_id = insert_rejected_email(
+                sender_email=row["sender_email"],
+                subject=row["subject"],
+                category=row["category"],
+                notes=row["notes"],
+                received_at=row["received_at"],
+                processed_at=row["processed_at"],
+                internet_message_id=row.get("internet_message_id"),
+            )
+            # insert_rejected_email returns -1 for unauthorized senders.
+            if isinstance(new_id, int) and new_id > 0:
+                inserted += 1
+                entry["already_pushed"] = True
+                marked += 1
+        except Exception as e:
+            errors += 1
+            print(f"(warn) failed to insert rejected email (category={row.get('category')}): {e}")
+
+    if marked:
+        try:
+            _atomic_write_json(json_path, data)
+        except Exception as e:
+            errors += 1
+            print(f"(warn) failed to update {json_path} after DB insert: {e}")
+
+    print(f"(ok) rejected_emails sync -> inserted={inserted}, skipped={skipped}, errors={errors}")
+    return (inserted, skipped, errors)
 
     # ─────────────────────────────────────────────────────────
     # 3) Now safely insert into DB (at-most-once semantics)
     # ─────────────────────────────────────────────────────────
-    try:
-        ids = insert_rejected_emails(rows_to_insert)  # expects list of ids
-
-        # Normalize returned ids to a list
-        if isinstance(ids, int):
-            ids = [ids]
-        elif ids is None:
-            ids = []
-
-        inserted = len(ids)
-
-    except Exception as bulk_exc:
-        print(f"(warn) bulk insert failed: {bulk_exc}. Falling back to single-row inserts.")
-        # Fallback: try inserting row-by-row so partial progress is possible
-        for i, row in enumerate(rows_to_insert):
-            try:
-                # Prefer single-row API if available; otherwise call bulk API with single item
-                try:
-                    new_id = insert_rejected_email(
-                        sender_email=row["sender_email"],
-                        subject=row["subject"],
-                        category=row["category"],
-                        notes=row["notes"],
-                        received_at=row["received_at"],
-                        processed_at=row["processed_at"],
-                        internet_message_id=row.get("internet_message_id"),
-                    )
-                except NameError:
-                    # insert_rejected_email not defined, try bulk function for single row
-                    res = insert_rejected_emails([row])
-                    new_id = (res[0] if res else 0) if isinstance(res, list) else (res or 0)
-
-                # JSON was already marked; we only count successes now
-                inserted += 1
-            except Exception as single_exc:
-                errors += 1
-                print(f"(warn) failed to insert rejected email (category={row['category']}): {single_exc}")
-
-    print(f"(ok) rejected_emails sync → inserted={inserted}, skipped={skipped}, errors={errors}")
-    return (inserted, skipped, errors)
-
 def insert_rate_upload(
     *,
     sender_email: Optional[str],
