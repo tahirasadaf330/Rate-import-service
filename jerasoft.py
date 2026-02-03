@@ -58,7 +58,8 @@ _session.mount("https://", HTTPAdapter(max_retries=_retry))
 
 #__________________________Enforce prefix_____________________________
 # --- prefix utilities (add near your string utils) ---
-_prefix_in_name_pat = re.compile(r'(?:prefix|prfx)[:\s-]*(\d+)\b', re.I)
+# Allow table names like '... PREFIX:#2223' by ignoring the '#'
+_prefix_in_name_pat = re.compile(r'(?:prefix|prfx)[:\s\-#]*(\d+)\b', re.I)
 
 def normalize_prefix(prefix) -> Optional[str]:
     if prefix is None:
@@ -413,8 +414,8 @@ def export_rates_by_query(
 if __name__ == "__main__":
     # Example quick-start (reads API key from env):
     info = export_rates_by_query(
-        subject="Quickcom tel com PRM trunk Prefix:001 USD",
-        target_query="Quickcom tel com PRM trunk Prefix:001 USD",
+        subject="[Sipstatus Global LTD] [Retail] [62750] [USD]",
+        target_query="[Sipstatus Global LTD] [Retail] [62750] [USD]",
         output_path="quickcom_rates.xlsx",
     )
     print(json.dumps(info, indent=2))
