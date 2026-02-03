@@ -871,6 +871,14 @@ def process_one_folder(folder: Path) -> str:
                 comparison_file_path = upload_info["comparison_file"]
                 break
     
+    # Internet message id to link rate_uploads back to processing_statuses
+    internet_message_id = str(
+        meta.get("internet_message_id")
+        or meta.get("internetMessageId")
+        or meta.get("message_id")
+        or ""
+    ).strip() or None
+
     upload_id = meta.get("rate_upload_id")
     if not upload_id:
         try:
@@ -882,6 +890,7 @@ def process_one_folder(folder: Path) -> str:
                 totals=stats_totals,
                 jera_table_id=jera_table_id,
                 comparison_file_path=comparison_file_path,
+                internet_message_id=internet_message_id,
             )
             meta["rate_upload_id"] = int(upload_id)
             save_metadata(folder, meta)
