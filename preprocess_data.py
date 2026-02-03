@@ -745,7 +745,7 @@ ALIAS_MAP = {
     'billing_increament': 'Billing Increment',   # common typo
     'billing_increments': 'Billing Increment',
     'billing_inc': 'Billing Increment',
-    #'min_inc': 'Billing Increment',  # e.g. "Min./Inc." column
+    'min_inc': 'Billing Increment',  # e.g. "Min./Inc." column
     'billing': 'Billing Increment',
     'billingincrement': 'Billing Increment',
     'rounding_rules': 'Billing Increment',
