@@ -745,6 +745,7 @@ ALIAS_MAP = {
     'billing_increament': 'Billing Increment',   # common typo
     'billing_increments': 'Billing Increment',
     'billing_inc': 'Billing Increment',
+    'min_inc': 'Billing Increment',  # e.g. "Min./Inc." column
     'billing': 'Billing Increment',
     'billingincrement': 'Billing Increment',
     'rounding_rules': 'Billing Increment',
@@ -1425,6 +1426,14 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
         df = df.loc[~missing_any].copy()
         df.reset_index(drop=True, inplace=True)
 
+    # Guard against "false cleaning" – if almost everything was stripped out,
+    # treat this as a failure instead of silently writing a tiny file.
+    row_count = len(df)
+    if row_count <= 3:
+        raise ValueError(
+            f"Cleaning produced only {row_count} data rows after validation; "
+            "treating this as a failed/false cleaning run."
+        )
 
     # finally, write the cleaned sheet
     out_path, writer_kwargs = _normalize_excel_writer_path(output_path)
@@ -1432,7 +1441,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"testfiles\MEDIATEL_RATES.xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\Hayo_Telecom-USD-A-Z-Retail-2026-02-02.xlsx"
     OUT_PATH = r"testfiles\MEDIATEL_RATES_cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
