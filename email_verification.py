@@ -301,7 +301,7 @@ _FREEFORM_TRUNK_PREFIX = re.compile(
     (?P<trunk>[A-Za-z][\w\-]*)\s+
     trunk\b
     .*?
-    prefix\b\s*[:\s-]*\s*(?P<prefix>\d+)
+    prefix\b\s*[:\s-]*\s*(?P<prefix>\d+|none)
     \s+
     (?P<currency>[A-Za-z]{3})
     \s*$
@@ -321,7 +321,7 @@ def _normalize_output(company: str, trunk: str, prefix, currency: str) -> Option
     Notes:
     - company/trunk are preserved (trimmed) because vendor matching uses subject company names.
     - prefix is stored as:
-        - None (if explicitly "none"/"None")
+        - "NONE" for explicit textual none/NONE (e.g. "none", "PREFIX NONE") with no digits
         - otherwise the first digit-run string (preserving leading zeros)
     - currency is normalized to uppercase.
     """
@@ -338,10 +338,9 @@ def _normalize_output(company: str, trunk: str, prefix, currency: str) -> Option
         p = prefix.strip()
         if not p:
             return None
-        # Allow only "NONE" or "PREFIX NONE" (case-insensitive) to mean None.
-        # Do NOT accept other phrases like "no prefix".
-        if p.lower() == "none" or re.fullmatch(r"prefix\s+none", p, flags=re.IGNORECASE):
-            prefix = None
+        lower_p = p.lower()
+        if "none" in lower_p and not re.search(r"\d", p):
+            prefix = "NONE"
         else:
             m = re.search(r"\d+", p)
             if not m:
@@ -363,7 +362,7 @@ def _extract_anyorder(subject: str) -> Optional[Dict[str, object]]:
             cand = tokens[i+1] if i + 1 < len(tokens) else ""
             val = cand.lower()
             if val == "none":
-                prefix = None
+                prefix = "NONE"
                 break
             if re.fullmatch(r"\d+", val):
                 prefix = int(val)

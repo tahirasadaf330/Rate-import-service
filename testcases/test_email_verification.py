@@ -131,17 +131,17 @@ class TestEmailVerification(unittest.TestCase):
         self.assertIsInstance(v3, dict)
         self.assertEqual(v3["prefix"], "1117")
 
-        # Prefix can be None
+        # Prefix textual "None" now maps to string "NONE"
         v4 = email_verification.validate_subject('[World Hub Communications Pte. Ltd.] [Premium] [None] [USD]')
         self.assertIsInstance(v4, dict)
-        self.assertIsNone(v4["prefix"])
+        self.assertEqual(v4["prefix"], "NONE")
 
         # Prefix can also be expressed as "PREFIX NONE" (but not other phrases)
         v4b = email_verification.validate_subject('[TITAN INTERNATIONAL] [STANDARD] [PREFIX NONE] [USD]')
         self.assertIsInstance(v4b, dict)
         self.assertEqual(v4b["company"], "TITAN INTERNATIONAL")
         self.assertEqual(v4b["trunk"], "STANDARD")
-        self.assertIsNone(v4b["prefix"])
+        self.assertEqual(v4b["prefix"], "NONE")
         self.assertEqual(v4b["currency"], "USD")
 
         # Freeform format is also valid:
@@ -159,6 +159,14 @@ class TestEmailVerification(unittest.TestCase):
         self.assertEqual(v6["trunk"], "PRM")
         self.assertEqual(v6["prefix"], "0007")
         self.assertEqual(v6["currency"], "USD")
+
+        # Freeform with textual none should map to prefix "NONE"
+        v8 = email_verification.validate_subject('Vendor X PRM trunk Prefix none usd')
+        self.assertIsInstance(v8, dict)
+        self.assertEqual(v8["company"], "Vendor X")
+        self.assertEqual(v8["trunk"], "PRM")
+        self.assertEqual(v8["prefix"], "NONE")
+        self.assertEqual(v8["currency"], "USD")
 
         # Invalid: not in strict bracket format
         # (This does NOT match freeform either because it lacks "<TRUNK> trunk" and the prefix/currency framing)

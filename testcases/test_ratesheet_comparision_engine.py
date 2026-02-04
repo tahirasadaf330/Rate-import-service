@@ -332,6 +332,26 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
         # not a special "Rescheduled" type.
         self.assertNotIn('Rescheduled', result['Change Type'].values)
 
+        # Do NOT stash when both old and new effective dates are in the past
+        # relative to as_of (backdated historical correction only).
+        left = pd.DataFrame({
+            COL_CODE: ['1001'],
+            COL_RATE: [0.05],
+            COL_EDATE: [datetime(2025, 2, 23)],
+            COL_BI: ['1/60'],
+            COL_NAME: ['A']
+        })
+        right = pd.DataFrame({
+            COL_CODE: ['1001'],
+            COL_RATE: [0.05],
+            COL_EDATE: [datetime(2025, 2, 13)],  # earlier but still before as_of
+            COL_BI: ['1/60'],
+            COL_NAME: ['A']
+        })
+        # as_of is after both dates -> treat as historical backdating only, no "Stashed" row
+        result, stats = compare(left, right, as_of_date='2026-01-01', notice_days=7, rate_tol=0.0)
+        self.assertNotIn('Stashed', result['Change Type'].values)
+
         # Increase
         left = pd.DataFrame({
             COL_CODE: ['1001'],

@@ -58,8 +58,8 @@ _session.mount("https://", HTTPAdapter(max_retries=_retry))
 
 #__________________________Enforce prefix_____________________________
 # --- prefix utilities (add near your string utils) ---
-# Allow table names like '... PREFIX:#2223' by ignoring the '#'
-_prefix_in_name_pat = re.compile(r'(?:prefix|prfx)[:\s\-#]*(\d+)\b', re.I)
+# Allow table names like '... PREFIX:#2223' by ignoring the '#', and also handle textual NONE
+_prefix_in_name_pat = re.compile(r'(?:prefix|prfx)[:\s\-#]*(\d+|none)\b', re.I)
 
 def normalize_prefix(prefix) -> Optional[str]:
     if prefix is None:
@@ -67,14 +67,19 @@ def normalize_prefix(prefix) -> Optional[str]:
     s = str(prefix).strip()
     if not s:
         return None
-    # Preserve leading zeros: return first digit run as-is.
+    # Preserve leading zeros: return first digit run as-is, or map textual NONE.
+    if "none" in s.lower():
+        return "NONE"
     m = re.search(r"\d+", s)
     return m.group(0) if m else None
 
 def table_prefix_from_name(name: str) -> Optional[str]:
     """Extract numeric prefix from a table name like '... PREFIX:33' or 'PRFX-33'."""
     m = _prefix_in_name_pat.search(name or "")
-    return (m.group(1) if m else None)
+    if not m:
+        return None
+    val = m.group(1)
+    return "NONE" if val.lower() == "none" else val
 
 def table_has_prefix(name: str, prefix_code: str) -> bool:
     """True if table name contains the exact prefix number."""
