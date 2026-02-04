@@ -180,7 +180,8 @@ def compare(
         )
         right_min_date_by_code = {str(k): v for k, v in right_min_date.items()}
 
-        # old rows with effective date later than earliest NEW date => stash candidate
+        # old rows with effective date later than earliest NEW date => stash candidate,
+        # but only if that old effective date is STILL in the future relative to as_of.
         left_future = (
             left_all.dropna(subset=[COL_EDATE])
             .assign(**{COL_CODE: left_all[COL_CODE].astype(str).str.strip()})
@@ -188,7 +189,8 @@ def compare(
         )
         right_min_df = right_min_date.reset_index().rename(columns={COL_EDATE: "n_min"})
         cand = left_future.merge(right_min_df, on=COL_CODE, how="inner")
-        cand = cand[cand[COL_EDATE] > cand["n_min"]]
+        # Require: old_date > new_min_date AND old_date >= as_of (future-dated rate)
+        cand = cand[(cand[COL_EDATE] > cand["n_min"]) & (cand[COL_EDATE] >= as_of)]
         if not cand.empty:
             cand = cand.sort_values(by=[COL_CODE, COL_EDATE], kind="mergesort")
             cand = cand.groupby(COL_CODE, as_index=False).head(1)

@@ -14,6 +14,9 @@ class TestJerasoft(unittest.TestCase):
         # Hash/label variants should still yield bare digits
         self.assertEqual(jerasoft.normalize_prefix('#2223'), '2223')
         self.assertEqual(jerasoft.normalize_prefix('Prefix:#2223'), '2223')
+        # Textual NONE should normalize to special prefix "NONE"
+        self.assertEqual(jerasoft.normalize_prefix('NONE'), 'NONE')
+        self.assertEqual(jerasoft.normalize_prefix('Prefix NONE'), 'NONE')
         self.assertEqual(jerasoft.normalize_prefix(None), None)
         self.assertEqual(jerasoft.normalize_prefix('abc'), None)
         self.assertEqual(jerasoft.normalize_prefix(''), None)
@@ -24,6 +27,8 @@ class TestJerasoft(unittest.TestCase):
         self.assertEqual(jerasoft.table_prefix_from_name('PRFX-33'), '33')
         # Table name with "PREFIX:#2223" should extract 2223
         self.assertEqual(jerasoft.table_prefix_from_name('TERM-CallCaribe Inc.-CC-PREFIX:#2223'), '2223')
+        # Table name with PREFIX NONE should extract special prefix "NONE"
+        self.assertEqual(jerasoft.table_prefix_from_name('TERM Vendor PRM trunk PREFIX NONE USD'), 'NONE')
         self.assertIsNone(jerasoft.table_prefix_from_name('NoPrefixHere'))
 
     def test_table_has_prefix(self):
@@ -34,6 +39,8 @@ class TestJerasoft(unittest.TestCase):
         self.assertTrue(jerasoft.table_has_prefix('TERM Quickcom PRM trunk PREFIX:040 USD', '040'))
         # Hash in table name should be ignored when matching prefix
         self.assertTrue(jerasoft.table_has_prefix('TERM-CallCaribe Inc.-CC-PREFIX:#2223', '2223'))
+        # Textual PREFIX NONE table should match prefix code "NONE"
+        self.assertTrue(jerasoft.table_has_prefix('TERM Vendor PRM trunk PREFIX NONE USD', 'NONE'))
 
     def test_normalize(self):
         self.assertEqual(jerasoft.normalize('  Foo.Bar  ##'), 'foo bar')
