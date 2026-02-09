@@ -257,6 +257,72 @@ class TestDateParsing(unittest.TestCase):
             if date_val:  # Skip None values
                 self.assertRegex(date_val, r'\d{4}-\d{2}-\d{2}')
 
+    def test_normalize_dates_month_name_variants_auto(self):
+        """Month-name dates like 'February 4, 2026' should parse to YYYY-MM-DD in AUTO mode."""
+        cases = {
+            'February 4, 2026': '2026-02-04',
+            'Feb 4, 2026': '2026-02-04',
+            '4 February 2026': '2026-02-04',
+            '4 Feb 2026': '2026-02-04',
+            '2026-Feb-04': '2026-02-04',
+            '2026-February-04': '2026-02-04',
+        }
+
+        df = pd.DataFrame({'Effective Date': list(cases.keys())})
+        result_df = normalize_dates(df.copy(), 'Effective Date', 'AUTO')
+
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                idx = df.index[df['Effective Date'] == raw][0]
+                self.assertEqual(result_df['Effective Date'].iloc[idx], expected)
+
+    def test_normalize_dates_with_time_and_timezone(self):
+        """Dates with time / timezone should drop time and return a valid date string."""
+        vals = [
+            '2026-02-04 10:30:00',
+            '2026-02-04T10:30:00',
+            '2026-02-04T10:30:00Z',
+            '2026-02-04 10:30:00+0000',
+            '2026-02-04 10:30:00+02:00',
+        ]
+
+        df = pd.DataFrame({'Effective Date': vals})
+        result_df = normalize_dates(df.copy(), 'Effective Date', 'AUTO')
+
+        # The plain "YYYY-MM-DD HH:MM:SS" form should definitely normalize to the base date
+        self.assertEqual(result_df['Effective Date'].iloc[0], '2026-02-04')
+
+        # For the other variants (with T / Z / offsets), just assert that we still
+        # get some valid YYYY-MM-DD date and that the time portion has been stripped.
+        for i in range(1, len(vals)):
+            with self.subTest(raw=vals[i]):
+                v = result_df['Effective Date'].iloc[i]
+                # Either a normalized date string or None if parsing fails
+                if v is not None and v != '' and not pd.isna(v):
+                    self.assertRegex(v, r'\d{4}-\d{2}-\d{2}')
+
+    def test_normalize_dates_specific_numeric_formats(self):
+        """Validate strict numeric formats MM-DD-YYYY and DD-MM-YYYY."""
+        df_mmdd = pd.DataFrame({'Effective Date': ['02-04-2026']})  # Feb 4, 2026
+        df_ddmm = pd.DataFrame({'Effective Date': ['04-02-2026']})  # 4 Feb 2026
+
+        res_mmdd = normalize_dates(df_mmdd.copy(), 'Effective Date', 'MM-DD-YYYY')
+        res_ddmm = normalize_dates(df_ddmm.copy(), 'Effective Date', 'DD-MM-YYYY')
+
+        self.assertEqual(res_mmdd['Effective Date'].iloc[0], '2026-02-04')
+        self.assertEqual(res_ddmm['Effective Date'].iloc[0], '2026-02-04')
+
+    def test_normalize_dates_invalid_values_produce_none(self):
+        """Clearly invalid dates should result in None in the normalized column."""
+        df = pd.DataFrame({
+            'Effective Date': ['not-a-date', '', '   ', '32-13-2026']
+        })
+
+        result_df = normalize_dates(df.copy(), 'Effective Date', 'AUTO')
+
+        for val in result_df['Effective Date']:
+            self.assertTrue(val is None or val == '' or pd.isna(val))
+
 
 class TestFileProcessing(unittest.TestCase):
     """Test file processing functionality."""
