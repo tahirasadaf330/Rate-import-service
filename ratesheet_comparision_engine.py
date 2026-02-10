@@ -376,9 +376,10 @@ def compare(
             notes.extend(left_reasons)
             notes.extend(right_reasons)
 
-        # In the stash scenario, require manual approval for the *replacement/new* row.
-        # (We already emit a separate "Stashed" row for the old future rate.)
-        if stash_case and str(change_type).strip().lower() != "unchanged":
+        # In the stash scenario, always require manual approval for the *replacement/new* row,
+        # even when the rate is unchanged. We already emit a separate "Stashed" row for the
+        # old future-dated rate.
+        if stash_case:
             status = "Rejected"
             notes.append("requires manual approval (replaces future-dated rate)")
 
