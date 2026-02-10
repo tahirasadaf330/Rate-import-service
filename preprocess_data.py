@@ -740,6 +740,7 @@ ALIAS_MAP = {
     'future_rate_effective_date': 'Effective Date',
     'bed': 'Effective Date',
     'application_date': 'Effective Date',
+    'effective_date_time': 'Effective Date',
     # Billing Increment
     'billing_increment': 'Billing Increment',
     'billing_increament': 'Billing Increment',   # common typo
@@ -755,6 +756,7 @@ ALIAS_MAP = {
     'increments': 'Billing Increment',
     'minimum_increments': 'Billing Increment',
     'bill_incrmnt': 'Billing Increment',
+    'initial_recurring': 'Billing Increment'
 }
 
 
@@ -1441,10 +1443,10 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\Hayo_Telecom_Inc._Gold_21.30.Feb.04.2026_178648540.xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\Rates_from_Qatama_Communication_to_Hayo_Telecom_Inc._-_Hayo_Platinum.Xlsx"
     OUT_PATH = r"testfiles\MEDIATEL_RATES_cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
-    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='MM-DD-YYYY')
+    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='DD-MM-YYYY')
    
     print('✅ Cleaned and saved.')
