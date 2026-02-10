@@ -310,6 +310,11 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
         result, stats = compare(left, right, as_of_date='2026-01-01', notice_days=7, rate_tol=0.0)
         self.assertIn('Stashed', result['Change Type'].values)
         self.assertIn('Unchanged', result['Change Type'].values)
+        # The replacement row (Unchanged) that comes instead of the stashed future rate
+        # must now be Rejected (requires manual approval).
+        unchanged_rows = result[result['Change Type'] == 'Unchanged']
+        if not unchanged_rows.empty:
+            self.assertTrue((unchanged_rows['Status'] == 'Rejected').all())
 
         # Stashed (rate changed + new date earlier): old effective date > new effective date AND rate changed
         left = pd.DataFrame({
