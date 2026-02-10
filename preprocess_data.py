@@ -1211,10 +1211,12 @@ def normalize_dates(df: pd.DataFrame, column_name: str, date_format_email: str |
                 pass
         return None
 
-    # Clean: drop tz tokens, unify separators, remove trailing time
+    # Clean: drop tz tokens, unify separators, remove trailing time (optionally with offset)
     s = s.str.replace(r'(?:\s+(?:UTC|Z|zz)|\s+[+\-]\d{2}:?\d{2}|\s+[+\-]\d{4})\s*$', '', regex=True)
     s = s.str.replace(r'[./]', '-', regex=True)
-    s = s.str.replace(r'[T ]\d{1,2}:\d{2}(:\d{2})?(\.\d+)?$', '', regex=True)
+    # Also handle cases like "2026-02-09 00:00:00+0000" and "2026-02-04T10:30:00Z"
+    # by allowing an optional +HHMM/+HH:MM or trailing Z after the time
+    s = s.str.replace(r'[T ]\d{1,2}:\d{2}(:\d{2})?(\.\d+)?(?:Z|[+\-]\d{2}:?\d{2}|[+\-]\d{4})?$', '', regex=True)
 
     def _to_strptime(fmt: str) -> str:
         f = fmt.strip().lower().replace('/', '-').replace('.', '-')
@@ -1236,6 +1238,10 @@ def normalize_dates(df: pd.DataFrame, column_name: str, date_format_email: str |
     ]
 
     out = []
+    # Track failures when an explicit date_format_email is provided so we
+    # can raise instead of silently auto-parsing to a wrong day/month.
+    explicit_parse_failures = []
+
     for raw in s.tolist():
         if not raw:
             out.append(None); continue
@@ -1266,36 +1272,30 @@ def normalize_dates(df: pd.DataFrame, column_name: str, date_format_email: str |
                 except Exception:
                     parsed = None
         else:
-            # strict attempt with provided format (supports MMM/MMMM tokens)
+            # EXPLICIT FORMAT MODE: when user passes date_format_email we
+            # must not auto-guess other layouts, because that can swap
+            # month/day. Try only the requested format; if it fails, mark
+            # this value as an error and leave it unparsed.
             fmt = _to_strptime(req) if '%' not in req else req
             try:
                 parsed = datetime.strptime(raw, fmt)
             except ValueError:
                 parsed = None
-                # SMART FALLBACK: if the text contains letters (month names), try alpha-month formats
-                if re.search(r'[A-Za-z]', raw):
-                    for fmt in ['%d-%b-%Y','%b-%d-%Y','%Y-%b-%d','%d-%B-%Y','%B-%d-%Y','%Y-%B-%d']:
-                        try:
-                            parsed = datetime.strptime(raw, fmt); break
-                        except ValueError:
-                            continue
-                # If still not parsed, try numeric alternates too
-                if parsed is None:
-                    for fmt in ['%Y-%m-%d','%d-%m-%Y','%m-%d-%Y']:
-                        try:
-                            parsed = datetime.strptime(raw, fmt); break
-                        except ValueError:
-                            continue
-                # Last-resort: dateutil
-                if parsed is None:
-                    try:
-                        parsed = dparse.parse(raw, dayfirst=True, fuzzy=True, default=datetime(1900,1,1))
-                    except Exception:
-                        parsed = None
+
+        if req and req.upper() != 'AUTO' and raw and parsed is None:
+            explicit_parse_failures.append(raw)
 
         out.append(parsed.strftime('%Y-%m-%d') if parsed else None)
 
     df[column_name] = out
+    # If a specific format was requested and any non-empty value could not
+    # be parsed, raise instead of silently returning wrong/guessed dates.
+    if date_format_email and date_format_email.upper() != 'AUTO' and explicit_parse_failures:
+        unique_bad = sorted(set(explicit_parse_failures))
+        raise ValueError(
+            f"Failed to parse Effective Date values with format '{date_format_email}': "
+            f"{unique_bad[:5]}"
+        )
     return df
 
 
@@ -1443,10 +1443,10 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\Rates_from_Qatama_Communication_to_Hayo_Telecom_Inc._-_Hayo_Platinum.Xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\TELECALL_0000040371-CUS3911_20260209114312_jerasoft_comparison.xlsx"
     OUT_PATH = r"testfiles\MEDIATEL_RATES_cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
-    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='DD-MM-YYYY')
+    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='YYYY-MM-DD')
    
     print('✅ Cleaned and saved.')

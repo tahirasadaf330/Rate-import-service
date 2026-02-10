@@ -312,6 +312,46 @@ class TestDateParsing(unittest.TestCase):
         self.assertEqual(res_mmdd['Effective Date'].iloc[0], '2026-02-04')
         self.assertEqual(res_ddmm['Effective Date'].iloc[0], '2026-02-04')
 
+    def test_normalize_dates_month_name_strict_formats(self):
+        """Validate strict month-name formats with an explicit date_format_email."""
+        cases = [
+            # DD-MMM-YYYY and DD-MMMM-YYYY
+            ('04-Feb-2026', 'DD-MMM-YYYY'),
+            ('04-February-2026', 'DD-MMMM-YYYY'),
+            # MMM-DD-YYYY and MMMM-DD-YYYY
+            ('Feb-04-2026', 'MMM-DD-YYYY'),
+            ('February-04-2026', 'MMMM-DD-YYYY'),
+            # YYYY-MMM-DD and YYYY-MMMM-DD
+            ('2026-Feb-04', 'YYYY-MMM-DD'),
+            ('2026-February-04', 'YYYY-MMMM-DD'),
+        ]
+
+        for raw, fmt in cases:
+            with self.subTest(raw=raw, fmt=fmt):
+                df = pd.DataFrame({'Effective Date': [raw]})
+                result = normalize_dates(df.copy(), 'Effective Date', fmt)
+                self.assertEqual(result['Effective Date'].iloc[0], '2026-02-04')
+
+    def test_normalize_dates_strict_yyyy_mm_dd_with_time_and_tz(self):
+        """YYYY-MM-DD with time/offset should still respect strict 'YYYY-MM-DD'."""
+        vals = [
+            '2026-02-04 10:30:00',
+            '2026-02-04T10:30:00',
+            '2026-02-04T10:30:00Z',
+            '2026-02-04 10:30:00+0000',
+            '2026-02-04 10:30:00+02:00',
+            '2026-02-04 10:30:00 +00:00',
+            '2026-02-04 10:30:00 +0000'
+        ]
+
+        df = pd.DataFrame({'Effective Date': vals})
+        result_df = normalize_dates(df.copy(), 'Effective Date', 'YYYY-MM-DD')
+
+        # After cleaning, strict parsing should yield the base date for all rows
+        for i, raw in enumerate(vals):
+            with self.subTest(raw=raw):
+                self.assertEqual(result_df['Effective Date'].iloc[i], '2026-02-04')
+
     def test_normalize_dates_invalid_values_produce_none(self):
         """Clearly invalid dates should result in None in the normalized column."""
         df = pd.DataFrame({
