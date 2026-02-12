@@ -718,13 +718,11 @@ ALIAS_MAP = {
     'price_peak': 'Rate',
     'pricemin': 'Rate',
     'recurring_charge': 'Rate',
-    'allday': 'Rate',
-    'all_days': 'Rate',
     'usd': 'Rate',
     'future_rate': 'Rate',
     'price_min': 'Rate',
-    'peak': 'Rate',
     'rate_min': 'Rate',
+    'standard_price': 'Rate',
     # Effective Date
     'effective_date': 'Effective Date',
     'effective': 'Effective Date',
@@ -738,7 +736,6 @@ ALIAS_MAP = {
     'efective_date': 'Effective Date',
     'activation_date': 'Effective Date',
     'future_rate_effective_date': 'Effective Date',
-    'bed': 'Effective Date',
     'application_date': 'Effective Date',
     'effective_date_time': 'Effective Date',
     # Billing Increment
