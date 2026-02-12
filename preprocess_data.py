@@ -1282,8 +1282,61 @@ def normalize_dates(df: pd.DataFrame, column_name: str, date_format_email: str |
             except ValueError:
                 parsed = None
 
-        if req and req.upper() != 'AUTO' and raw and parsed is None:
-            explicit_parse_failures.append(raw)
+        if req and req.upper() != 'AUTO':
+            # Expand the requested format into a small set of equivalent patterns
+            # (same logical order) before giving up. This keeps strictness while
+            # allowing common separators and month-name variants.
+            def _equivalent_formats(template: str) -> list[str]:
+                key = template.strip().lower().replace(',', '')
+                key = key.replace('/', '-').replace('.', '-')
+                # If caller already passed a strptime pattern, just return it.
+                if '%' in key:
+                    return [template]
+
+                def _with_month_first() -> list[str]:
+                    return [
+                        '%m-%d-%Y', '%m/%d/%Y', '%m.%d.%Y',
+                        '%b-%d-%Y', '%B-%d-%Y',
+                        '%b %d %Y', '%B %d %Y',
+                        '%b %d, %Y', '%B %d, %Y',
+                        '%b/%d/%Y', '%B/%d/%Y'
+                    ]
+
+                def _with_day_first() -> list[str]:
+                    return [
+                        '%d-%m-%Y', '%d/%m/%Y', '%d.%m.%Y',
+                        '%d-%b-%Y', '%d-%B-%Y',
+                        '%d %b %Y', '%d %B %Y',
+                        '%d %b, %Y', '%d %B, %Y',
+                        '%d/%b/%Y', '%d/%B/%Y'
+                    ]
+
+                def _with_year_first() -> list[str]:
+                    return [
+                        '%Y-%m-%d', '%Y/%m/%d', '%Y.%m.%d',
+                        '%Y-%b-%d', '%Y-%B-%d',
+                        '%Y %b %d', '%Y %B %d'
+                    ]
+
+                if key == 'mm-dd-yyyy':
+                    return _with_month_first()
+                if key == 'dd-mm-yyyy':
+                    return _with_day_first()
+                if key == 'yyyy-mm-dd':
+                    return _with_year_first()
+                # Fallback: just the normalized strptime translation
+                return [_to_strptime(template)]
+
+            if raw and parsed is None:
+                for alt in _equivalent_formats(req):
+                    try:
+                        parsed = datetime.strptime(raw, alt)
+                        break
+                    except ValueError:
+                        continue
+
+            if raw and parsed is None:
+                explicit_parse_failures.append(raw)
 
         out.append(parsed.strftime('%Y-%m-%d') if parsed else None)
 
@@ -1443,10 +1496,10 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\TELECALL_0000040371-CUS3911_20260209114312_jerasoft_comparison.xlsx"
-    OUT_PATH = r"testfiles\MEDIATEL_RATES_cleaned.xlsx"
+    PATH = r"C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-import-service\testfiles\HAYOINWHL1771151520260211123403.csv"
+    OUT_PATH = r"C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-import-service\testfiles\HAYOINWHL1771151520260211123403_cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
-    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='YYYY-MM-DD')
+    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='MM-DD-YYYY')
    
     print('✅ Cleaned and saved.')
