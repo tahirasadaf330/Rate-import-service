@@ -1417,6 +1417,25 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
 
     df = df[required_cols].copy()
 
+    # Early prune: drop any row where a required field is missing/blank.
+    # This strips footer/notes rows before further parsing/normalization.
+    early_missing = pd.Series(False, index=df.index)
+    for col in required_cols:
+        if col not in df.columns:
+            continue
+        s = df[col]
+        col_missing = s.isna()
+        try:
+            t = s.astype(str).str.strip().str.lower()
+            col_missing = col_missing | t.eq("") | t.eq("nan") | t.eq("none") | t.eq("nat")
+        except Exception:
+            pass
+        early_missing = early_missing | col_missing
+
+    if early_missing.any():
+        df = df.loc[~early_missing].copy()
+        df.reset_index(drop=True, inplace=True)
+
     # 5) clean fields
     # Dst Code: keep as string, strip; drop truly empty codes
     df['Dst Code'] = df['Dst Code'].astype(str).str.strip()
