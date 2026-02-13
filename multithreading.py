@@ -11,7 +11,7 @@ import traceback  # >>> ADDED
 
 # ---- import your existing functions ----
 from jerasoft import export_rates_by_query
-from ratesheet_comparision_engine import read_table, compare, write_excel
+from ratesheet_comparision_engine import read_table, compare, write_excel, summarize_changes
 from preprocess_data import load_clean_rates
 from database import (
     insert_rate_upload,
@@ -175,6 +175,56 @@ def read_comparison_table(path: Path) -> pd.DataFrame:
     df["Effective Date"] = pd.to_datetime(df["Effective Date"], errors="coerce", utc=True)
     df.dropna(how="all", inplace=True)
     return df
+
+
+def build_full_new_comparison_from_vendor(df_vendor: pd.DataFrame) -> pd.DataFrame:
+    """Construct a synthetic comparison result when there is *no* Jera baseline.
+
+    Each vendor row becomes a "New" row with Status="Accepted" and no Old Rate.
+    This lets the rest of the pipeline (DB push, Jera upload) work unchanged,
+    because it still sees a normal comparison-result style table.
+    """
+    rows: list[dict[str, Any]] = []
+    for _, r in df_vendor.iterrows():
+        code = str(r.get("Dst Code") or "").strip()
+        if not code:
+            continue
+
+        name = r.get("Dst Code Name")
+        bi_new = r.get("Billing Increment")
+
+        rows.append(
+            {
+                "Code": code,
+                "Dst Code Name": None if pd.isna(name) or str(name).strip() == "" else str(name).strip(),
+                "Old Rate": None,
+                "New Rate": r.get("Rate"),
+                "Old Billing Increment": None,
+                "New Billing Increment": None if pd.isna(bi_new) else (str(bi_new).strip() or None),
+                "Effective Date": r.get("Effective Date"),
+                "Status": "Accepted",
+                "Change Type": "New",
+                "Notes": "imported as new (no baseline ratesheet)",
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "Code",
+                "Dst Code Name",
+                "Old Rate",
+                "New Rate",
+                "Old Billing Increment",
+                "New Billing Increment",
+                "Effective Date",
+                "Status",
+                "Change Type",
+                "Notes",
+            ]
+        )
+
+    return pd.DataFrame(rows)
 
 def df_to_detail_dicts(df: pd.DataFrame, received_at: Optional[datetime] = None) -> List[Dict[str, Any]]:
     details: List[Dict[str, Any]] = []
@@ -604,72 +654,189 @@ def process_one_folder(folder: Path) -> str:
     # -------- 3) Comparison (if needed) --------
     meta = load_metadata(folder) or {}
     if "comparision_result" not in (meta.keys()):
+        # Track whether we've already generated a full-new comparison so we
+        # can skip the baseline compare block below.
+        skip_baseline = False
+
         # Hard stop: if preprocessing failed, do NOT proceed to comparison.
         # This prevents compare/DB push when cleaned outputs are incomplete or invalid.
         if meta.get("final_ok") is False:
-            meta["comparision_result"] = {"result": "comparison skipped: preprocessing failed (final_ok=false)"}
-            save_metadata(folder, meta)
-            return f"[{folder.name}] skip compare: preprocessing failed"
+            # Special case: JeraSoft export succeeded but has 0 rows.
+            # In this case, treat the vendor file as a full NEW import
+            # instead of failing the whole pipeline.
+            jera_info = meta.get("human_eval_details_jerasoft") or {}
+            rows_js = jera_info.get("rows")
+            zero_row_js = isinstance(rows_js, int) and rows_js == 0 and bool(meta.get("jera_fetched"))
 
-        # pre_map = meta.get("preprocessed_results", {}) or {}
+            if zero_row_js:
+                pre_map_raw = meta.get("preprocessed_results") or {}
 
-        pre_map_raw = meta.get("preprocessed_results") or {}
-        pre_map = {k.lower(): v for k, v in pre_map_raw.items()}
+                def _norm_local(s: str) -> str:
+                    return str(s).strip().casefold()
 
-        left_path = find_jerasoft_file(folder)
+                pre_map_ci = {_norm_local(k): v for k, v in pre_map_raw.items()}
 
-        print(f"[{folder.name}] DEBUG: baseline file chosen = {left_path.name!r}")
-        print(f"[{folder.name}] DEBUG: pre_map keys ({len(pre_map)}): {[k for k in pre_map.keys()]}")
-        for k in pre_map.keys():
-            print(f"[{folder.name}] DEBUG: compare key={k!r} == left? {k == left_path.name}  "
-                f"len(key)={len(k)} len(left)={len(left_path.name)}")
+                vfiles = vendor_files(folder)
+                if not vfiles:
+                    meta["comparision_result"] = {"result": "no vendor files to import as new"}
+                    save_metadata(folder, meta)
+                    # No comparison results means nothing for DB push; stop here.
+                    return f"[{folder.name}] no vendor files for full-new import (Jera rows=0)"
 
-        print(f"[{folder.name}] DEBUG: baseline file chosen = {left_path}")
-        print(f"[{folder.name}] DEBUG: baseline file chosen = {left_path.name}")
-     
-        print(f"[{folder.name}] DEBUG: pre_map keys = {list(pre_map.keys())[:50]}")
-        print(f"[{folder.name}] DEBUG: exact match? {left_path.name in pre_map}")
-        print(f"[{folder.name}] DEBUG: pre_map[left] = {pre_map.get(left_path.name)}")
-        print(f"[{folder.name}] DEBUG: lower match? {left_path.name.lower() in {k.lower(): v for k,v in pre_map.items()}}")
+                comp_result: Dict[str, bool] = {}
+                writes = 0
 
-        if not left_path:
-            meta["comparision_result"] = {"result": "comparison skipped: no baseline file found"}
-            save_metadata(folder, meta)
-            return f"[{folder.name}] skip compare: no baseline"
+                as_of_date = as_of_from_metadata(folder)
 
-        # baseline_ok = bool(pre_map.get(left_path.name))
-        def norm(s: str) -> str: return s.strip().casefold()
-        pre_map_ci = {norm(k): v for k, v in (meta.get("preprocessed_results") or {}).items()}
-        lp = left_path.name
-        lp_n = norm(lp)
-        raw_n = norm(lp.replace("_cleaned.xlsx", ".xlsx")) if lp_n.endswith("_cleaned.xlsx") else lp_n
-        baseline_ok = bool(pre_map_ci.get(lp_n) or pre_map_ci.get(raw_n))
+                for v in vfiles:
+                    vname = v.name
+                    vkey = _norm_local(vname)
+                    raw_v = vkey.replace("_cleaned.xlsx", ".xlsx") if vkey.endswith("_cleaned.xlsx") else vkey
+                    vendor_ok = bool(pre_map_ci.get(vkey) or pre_map_ci.get(raw_v))
+                    if not vendor_ok:
+                        print(f"[{folder.name}] full-new import skip {vname}: not preprocessed")
+                        comp_result[vname] = False
+                        continue
+
+                    try:
+                        # Read the cleaned vendor sheet and synthesize a comparison-style
+                        # table where every row is New/Accepted.
+                        df_vendor = read_table(str(v), None)
+                        result_df = build_full_new_comparison_from_vendor(df_vendor)
+
+                        out_path = folder / f"{v.stem}_comparision_result.xlsx"
+                        write_excel(result_df, str(out_path))
+                        print(f"[{folder.name}] wrote full-new result to {out_path} (Jera rows=0)")
+
+                        # Optional attachment stats, consistent with normal path
+                        stats = summarize_changes(result_df)
+
+                        comp_result[vname] = True
+                        writes += 1
+
+                        meta.setdefault("attachment_stats", {})
+                        meta["attachment_stats"][v.name] = {
+                            **stats,
+                            "source_attachment": v.name,
+                            "result_file": out_path.name,
+                            "generated_at_utc": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                        }
+
+                        # Also store comparison file path for this vendor so
+                        # rate_upload_service can recover the original vendor
+                        # attachment name and build a friendly CSV filename
+                        # for JeraSoft Import History (like manual uploads).
+                        try:
+                            jerasoft_table_id = meta.get("table_id") or meta.get("best_table_id")
+                            meta.setdefault("jerasoft_upload", {})
+                            meta["jerasoft_upload"][v.name] = {
+                                "table_id": jerasoft_table_id,
+                                "comparison_file": str(out_path.absolute()),
+                                "created_at": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                                "status": "ready_for_manual_upload",
+                            }
+                        except Exception:
+                            # Never block processing if metadata update fails.
+                            pass
+                        save_metadata(folder, meta)
+
+                    except Exception as e:
+                        comp_result[vname] = False
+                        print(f"[{folder.name}] full-new import fail {vname}: {e}")
+
+                if comp_result:
+                    success_any = any(comp_result.values())
+                    meta["comparision_result"] = {"result": "ok" if success_any else "no comparisons succeeded", **comp_result}
+                else:
+                    meta["comparision_result"] = {"result": "no eligible vendor files"}
+
+                meta["processed_at_utc"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                save_metadata(folder, meta)
+
+                try:
+                    mark_processing_stage(directory_name=folder.name, stage="rate_compared")
+                except Exception as e:
+                    print(f"[{folder.name}] stage warn (rate_compared, full-new): {e}")
+
+                # We already generated a full-new comparison result; skip
+                # the baseline comparison logic below and go straight to
+                # the DB push section.
+                skip_baseline = True
+
+            else:
+                # Default behaviour: if preprocessing failed and it's *not* the
+                # zero-row JeraSoft case, skip comparison as before.
+                meta["comparision_result"] = {"result": "comparison skipped: preprocessing failed (final_ok=false)"}
+                save_metadata(folder, meta)
+                return f"[{folder.name}] skip compare: preprocessing failed"
+
+        # If we already handled the zero-row JeraSoft case and built a
+        # full-new comparison, skip the baseline comparison entirely and
+        # fall through to the DB push section.
+        if skip_baseline:
+            pass
+        else:
+            # pre_map = meta.get("preprocessed_results", {}) or {}
+
+            pre_map_raw = meta.get("preprocessed_results") or {}
+            pre_map = {k.lower(): v for k, v in pre_map_raw.items()}
+
+            left_path = find_jerasoft_file(folder)
+
+            if left_path:
+                print(f"[{folder.name}] DEBUG: baseline file chosen = {left_path.name!r}")
+                print(f"[{folder.name}] DEBUG: pre_map keys ({len(pre_map)}): {[k for k in pre_map.keys()]}")
+                for k in pre_map.keys():
+                    print(f"[{folder.name}] DEBUG: compare key={k!r} == left? {k == left_path.name}  "
+                        f"len(key)={len(k)} len(left)={len(left_path.name)}")
+
+                print(f"[{folder.name}] DEBUG: baseline file chosen = {left_path}")
+                print(f"[{folder.name}] DEBUG: baseline file chosen = {left_path.name}")
+         
+                print(f"[{folder.name}] DEBUG: pre_map keys = {list(pre_map.keys())[:50]}")
+                print(f"[{folder.name}] DEBUG: exact match? {left_path.name in pre_map}")
+                print(f"[{folder.name}] DEBUG: pre_map[left] = {pre_map.get(left_path.name)}")
+                print(f"[{folder.name}] DEBUG: lower match? {left_path.name.lower() in {k.lower(): v for k,v in pre_map.items()}}")
+            else:
+                print(f"[{folder.name}] DEBUG: baseline file chosen = None")
+
+            if not left_path:
+                meta["comparision_result"] = {"result": "comparison skipped: no baseline file found"}
+                save_metadata(folder, meta)
+                return f"[{folder.name}] skip compare: no baseline"
+
+            # baseline_ok = bool(pre_map.get(left_path.name))
+            def norm(s: str) -> str: return s.strip().casefold()
+            pre_map_ci = {norm(k): v for k, v in (meta.get("preprocessed_results") or {}).items()}
+            lp = left_path.name
+            lp_n = norm(lp)
+            raw_n = norm(lp.replace("_cleaned.xlsx", ".xlsx")) if lp_n.endswith("_cleaned.xlsx") else lp_n
+            baseline_ok = bool(pre_map_ci.get(lp_n) or pre_map_ci.get(raw_n))
 
 
 
 
+            if not baseline_ok:
+                meta["comparision_result"] = {"result": "comparison skipped: comparison file failed preprocessing"}
+                save_metadata(folder, meta)
+                return f"[{folder.name}] skip compare: baseline not preprocessed"
 
-        if not baseline_ok:
-            meta["comparision_result"] = {"result": "comparison skipped: comparison file failed preprocessing"}
-            save_metadata(folder, meta)
-            return f"[{folder.name}] skip compare: baseline not preprocessed"
+            vfiles = vendor_files(folder)
+            if not vfiles:
+                meta["comparision_result"] = {"result": "no vendor files to compare"}
+                save_metadata(folder, meta)
+                return f"[{folder.name}] no vendor files"
 
-        vfiles = vendor_files(folder)
-        if not vfiles:
-            meta["comparision_result"] = {"result": "no vendor files to compare"}
-            save_metadata(folder, meta)
-            return f"[{folder.name}] no vendor files"
+            as_of_date = as_of_from_metadata(folder)
+            try:
+                left_df = read_table(str(left_path), None)
+            except Exception as e:
+                meta["comparision_result"] = {"result": f"comparison skipped: failed to read baseline ({e})"}
+                save_metadata(folder, meta)
+                return f"[{folder.name}] skip compare: read baseline fail"
 
-        as_of_date = as_of_from_metadata(folder)
-        try:
-            left_df = read_table(str(left_path), None)
-        except Exception as e:
-            meta["comparision_result"] = {"result": f"comparison skipped: failed to read baseline ({e})"}
-            save_metadata(folder, meta)
-            return f"[{folder.name}] skip compare: read baseline fail"
-
-        comp_result: Dict[str, bool] = {}
-        writes = 0
+            comp_result: Dict[str, bool] = {}
+            writes = 0
         # for v in vfiles:
         #     vname = v.name
         #     if not pre_map.get(vname):
@@ -699,114 +866,141 @@ def process_one_folder(folder: Path) -> str:
         def _norm(s: str) -> str:
             return s.strip().casefold()
 
-# reuse the case-insensitive map you already build above:
-# pre_map_ci = { _norm(k): v }  (it already exists in your code)
+        # reuse the case-insensitive map you already build above:
+        # pre_map_ci = { _norm(k): v }  (it already exists in your code)
 
-        for v in vfiles:
-            vname = v.name
-            vkey  = _norm(vname)
-            raw_v = vkey.replace("_cleaned.xlsx", ".xlsx") if vkey.endswith("_cleaned.xlsx") else vkey
-            vendor_ok = bool(pre_map_ci.get(vkey) or pre_map_ci.get(raw_v))
-            if not vendor_ok:
-                print(f"[{folder.name}] compare skip {vname}: not preprocessed (have keys={list(pre_map_ci.keys())})")
-                comp_result[vname] = False
-                continue
+        if not skip_baseline:
+            for v in vfiles:
+                vname = v.name
+                vkey  = _norm(vname)
+                raw_v = vkey.replace("_cleaned.xlsx", ".xlsx") if vkey.endswith("_cleaned.xlsx") else vkey
+                vendor_ok = bool(pre_map_ci.get(vkey) or pre_map_ci.get(raw_v))
+                if not vendor_ok:
+                    print(f"[{folder.name}] compare skip {vname}: not preprocessed (have keys={list(pre_map_ci.keys())})")
+                    comp_result[vname] = False
+                    continue
+
+                try:
+                    right_df = read_table(str(v), None)
+                    # exact match mode (no tolerance)
+                    # show progress for large comparisons so it doesn't look "stuck"
+                    progress_every = int(os.getenv("COMPARE_PROGRESS_EVERY", "0") or "0")
+                    result, stats = compare(left_df, right_df, as_of_date, 7, 0.0, progress_every=progress_every)
+                    out_path = folder / f"{v.stem}_comparision_result.xlsx"
+                    write_excel(result, str(out_path))
+                    print(f"[{folder.name}] wrote result to {out_path}")
+
+                    writes += 1
+                    comp_result[vname] = True
+
+                    # Get table_id from metadata for JeraSoft upload
+                    jerasoft_table_id = meta.get("table_id") or meta.get("best_table_id")
+                    
+                    # Mark for JeraSoft BULK upload in database (always bulk, never individual)
+                    jera_upload_enabled = os.getenv("JERASOFT_DB_CONTROL", "true").lower() in ("true", "1", "yes")
+                    min_rates = int(os.getenv("JERASOFT_MIN_RATES_FOR_AUTO_UPLOAD", "1"))
+                    
+                    if jera_upload_enabled and jerasoft_table_id and len(result) >= min_rates:
+                        try:
+                            print(f"[{folder.name}] JeraSoft table {jerasoft_table_id} detected - comparison file ready for MANUAL bulk upload")
+                            print(f"[{folder.name}] ℹ️  To upload: Set is_rate_approved_by_admin = TRUE in database for this record")
+                            
+                            # Store comparison file path in metadata for future manual upload
+                            # No automatic marking - manual control required
+                            subject = meta.get("subject", f"Rate Update - {folder.name}")
+                            sender_email = meta.get("sender", "unknown@example.com")
+                            
+                            # Store file info for manual upload control
+                            print(f"[{folder.name}] 📋 Comparison file ready: {out_path.name}")
+                            print(f"[{folder.name}] 🎯 Target table: {jerasoft_table_id}")
+                            print(f"[{folder.name}] ⚡ Manual control: Set is_rate_approved_by_admin=TRUE in database to trigger bulk upload")
+                            
+                            # Store upload info in metadata (for reference only)
+                            meta.setdefault("jerasoft_upload", {})
+                            meta["jerasoft_upload"][v.name] = {
+                                "table_id": jerasoft_table_id,
+                                "comparison_file": str(out_path.absolute()),
+                                "subject": subject,
+                                "sender_email": sender_email,
+                                "created_at": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                                "status": "ready_for_manual_upload"
+                            }
+                            
+                        except Exception as upload_error:
+                            print(f"[{folder.name}] ❌ Failed to mark for JeraSoft upload: {upload_error}")
+                            meta.setdefault("jerasoft_upload", {})
+                            meta["jerasoft_upload"][v.name] = {
+                                "table_id": jerasoft_table_id,
+                                "error": str(upload_error),
+                                "uploaded_at_utc": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                                "status": "failed"
+                            }
+                    else:
+                        if not jerasoft_table_id:
+                            print(f"[{folder.name}] ⚠️ No table_id in metadata, skipping JeraSoft upload")
+                        elif len(result) == 0:
+                            print(f"[{folder.name}] ⚠️ No comparison results, skipping JeraSoft upload")
+
+                    meta.setdefault("attachment_stats", {})
+                    meta["attachment_stats"][v.name] = {
+                        **stats,
+                        "source_attachment": v.name,
+                        "result_file": out_path.name,
+                        "generated_at_utc": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    }
+                    save_metadata(folder, meta)
+
+
+
+                except Exception as e:
+                    comp_result[vname] = False
+                    print(f"\n\n\n\n\n[{folder.name}] compare fail {vname}: {e}\n\n\n\n")
+
+        if not skip_baseline:
+            if comp_result:
+                success_any = any(comp_result.values())
+                print(f"\n\nDEBUG: Putting comparision result in the metadata file \n\n")
+                meta["comparision_result"] = {"result": "ok" if success_any else "no comparisons succeeded", **comp_result}
+            else:
+                meta["comparision_result"] = {"result": "no eligible vendor files"}
+            meta["processed_at_utc"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            save_metadata(folder, meta)
 
             try:
-                right_df = read_table(str(v), None)
-                # exact match mode (no tolerance)
-                # show progress for large comparisons so it doesn't look "stuck"
-                progress_every = int(os.getenv("COMPARE_PROGRESS_EVERY", "0") or "0")
-                result, stats = compare(left_df, right_df, as_of_date, 7, 0.0, progress_every=progress_every)
-                out_path = folder / f"{v.stem}_comparision_result.xlsx"
-                write_excel(result, str(out_path))
-                print(f"[{folder.name}] wrote result to {out_path}")
-
-                writes += 1
-                comp_result[vname] = True
-
-                # Get table_id from metadata for JeraSoft upload
-                jerasoft_table_id = meta.get("table_id") or meta.get("best_table_id")
-                
-                # Mark for JeraSoft BULK upload in database (always bulk, never individual)
-                jera_upload_enabled = os.getenv("JERASOFT_DB_CONTROL", "true").lower() in ("true", "1", "yes")
-                min_rates = int(os.getenv("JERASOFT_MIN_RATES_FOR_AUTO_UPLOAD", "1"))
-                
-                if jera_upload_enabled and jerasoft_table_id and len(result) >= min_rates:
-                    try:
-                        print(f"[{folder.name}] JeraSoft table {jerasoft_table_id} detected - comparison file ready for MANUAL bulk upload")
-                        print(f"[{folder.name}] ℹ️  To upload: Set is_rate_approved_by_admin = TRUE in database for this record")
-                        
-                        # Store comparison file path in metadata for future manual upload
-                        # No automatic marking - manual control required
-                        subject = meta.get("subject", f"Rate Update - {folder.name}")
-                        sender_email = meta.get("sender", "unknown@example.com")
-                        
-                        # Store file info for manual upload control
-                        print(f"[{folder.name}] 📋 Comparison file ready: {out_path.name}")
-                        print(f"[{folder.name}] 🎯 Target table: {jerasoft_table_id}")
-                        print(f"[{folder.name}] ⚡ Manual control: Set is_rate_approved_by_admin=TRUE in database to trigger bulk upload")
-                        
-                        # Store upload info in metadata (for reference only)
-                        meta.setdefault("jerasoft_upload", {})
-                        meta["jerasoft_upload"][v.name] = {
-                            "table_id": jerasoft_table_id,
-                            "comparison_file": str(out_path.absolute()),
-                            "subject": subject,
-                            "sender_email": sender_email,
-                            "created_at": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-                            "status": "ready_for_manual_upload"
-                        }
-                        
-                    except Exception as upload_error:
-                        print(f"[{folder.name}] ❌ Failed to mark for JeraSoft upload: {upload_error}")
-                        meta.setdefault("jerasoft_upload", {})
-                        meta["jerasoft_upload"][v.name] = {
-                            "table_id": jerasoft_table_id,
-                            "error": str(upload_error),
-                            "uploaded_at_utc": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-                            "status": "failed"
-                        }
-                else:
-                    if not jerasoft_table_id:
-                        print(f"[{folder.name}] ⚠️ No table_id in metadata, skipping JeraSoft upload")
-                    elif len(result) == 0:
-                        print(f"[{folder.name}] ⚠️ No comparison results, skipping JeraSoft upload")
-
-                meta.setdefault("attachment_stats", {})
-                meta["attachment_stats"][v.name] = {
-                    **stats,
-                    "source_attachment": v.name,
-                    "result_file": out_path.name,
-                    "generated_at_utc": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-                }
-                save_metadata(folder, meta)
-
-
-
+                mark_processing_stage(directory_name=folder.name, stage="rate_compared")
             except Exception as e:
-                comp_result[vname] = False
-                print(f"\n\n\n\n\n[{folder.name}] compare fail {vname}: {e}\n\n\n\n")
-
-        if comp_result:
-            success_any = any(comp_result.values())
-            print(f"\n\nDEBUG: Putting comparision result in the metadata file \n\n")
-            meta["comparision_result"] = {"result": "ok" if success_any else "no comparisons succeeded", **comp_result}
-        else:
-            meta["comparision_result"] = {"result": "no eligible vendor files"}
-        meta["processed_at_utc"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        save_metadata(folder, meta)
-
-        try:
-            mark_processing_stage(directory_name=folder.name, stage="rate_compared")
-        except Exception as e:
-            print(f"[{folder.name}] stage warn (rate_compared): {e}")
+                print(f"[{folder.name}] stage warn (rate_compared): {e}")
 
     # -------- 4) DB push (per-folder) --------
     meta = load_metadata(folder) or {}
     comp = meta.get("comparision_result")
     if not (isinstance(comp, dict) and str(comp.get("result", "")).strip().lower() == "ok"):
         return f"[{folder.name}] skip DB push: result not ok"
+
+    # Special handling for the zero-row JeraSoft case where we treated the
+    # vendor sheet as a full NEW import. In that path, the cleaning step
+    # may have marked file_cleaned as failed (because the Jera file has
+    # no rows), which blocks later stages in processing_statuses. Once we
+    # have a successful comparison result, we can backfill the stage flags
+    # so processing_statuses reflects the true outcome for this message.
+    jera_info = meta.get("human_eval_details_jerasoft") or {}
+    rows_js = jera_info.get("rows")
+    zero_row_js = isinstance(rows_js, int) and rows_js == 0 and bool(meta.get("jera_fetched"))
+
+    if zero_row_js:
+        try:
+            # Ensure file_cleaned and rate_compared are marked as completed
+            mark_processing_stage(directory_name=folder.name, stage="file_cleaned")
+            mark_processing_stage(directory_name=folder.name, stage="rate_compared")
+
+            # If comparison results were already pushed in a prior run,
+            # also advance the final rate_uploaded stage so all flags are
+            # TRUE for this special full-new import case.
+            rp_existing = meta.get("results_pushed") or {}
+            if any(v is True for v in rp_existing.values()):
+                mark_processing_stage(directory_name=folder.name, stage="rate_uploaded", final_status=True)
+        except Exception as e:
+            print(f"[{folder.name}] stage warn (zero-row Jera backfill): {e}")
 
     # discover result files
     result_files = sorted(
