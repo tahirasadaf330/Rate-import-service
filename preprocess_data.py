@@ -753,7 +753,8 @@ ALIAS_MAP = {
     'increments': 'Billing Increment',
     'minimum_increments': 'Billing Increment',
     'bill_incrmnt': 'Billing Increment',
-    'initial_recurring': 'Billing Increment'
+    'initial_recurring': 'Billing Increment',
+    'billing_interval': 'Billing Increment',
 }
 
 
@@ -927,29 +928,14 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
         pair_hit = any(_has_key(a) and _has_key(b) for (a, b) in BILLING_PAIRS)
         dbg("[canon] billing_pair_hit:", pair_hit, "pairs_checked:", BILLING_PAIRS)
 
-        # Singles are also enough, because _synthesize_billing_increment can duplicate a single
-        # Extract all possible singles from pairs dynamically
-        potential_singles = set()
-        for a, b in BILLING_PAIRS:
-            potential_singles.add(a)
-            potential_singles.add(b)
-        
-        # Add explicit singles
-        explicit_singles = ['increment']
-        potential_singles.update(explicit_singles)
-        
-        # Check if any single column from pairs exists (even if its pair doesn't)
-        single_hit = any(_has_key(k) for k in potential_singles)
-        
-        dbg("[canon] billing_pair_hit:", pair_hit, "singles_hit:", single_hit,
-            "pairs_checked:", BILLING_PAIRS, "singles_checked:", list(potential_singles))
+        dbg("[canon] billing_pair_hit:", pair_hit, "pairs_checked:", BILLING_PAIRS)
 
-        if pair_hit or single_hit:
+        if pair_hit:
             # don’t count BI as missing; create placeholder so later selection won’t crash
             missing = [m for m in missing if m != 'Billing Increment']
             if 'Billing Increment' not in df.columns:
                 df['Billing Increment'] = ''   # _synthesize_billing_increment will fill this later
-            dbg("[canon] Billing Increment satisfied via header pair/single; will synthesize values later.")
+            dbg("[canon] Billing Increment satisfied via header pair; will synthesize values later.")
     # -----------------------------------------------------------------------------------
 
     # Final guard
@@ -959,14 +945,7 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
         dbg("[canon] precleaned originals:", preclean_map)
         dbg("[canon] normalized originals:", norm_map)
         dbg("[canon] stripped keys:", key_map)
-        raise ValueError(
-            "Missing required columns: "
-            f"{missing}. Found headers: {original}. "
-            f"Precleaned: {preclean_map}. "
-            f"Normalized: {norm_map}. "
-            f"Stripped keys: {key_map}. "
-            "Add more variants to ALIAS_MAP or harden _norm/_preclean_header_token."
-        )
+        raise ValueError(f"Missing required columns: {missing}.")
     return df
 
 
@@ -1512,10 +1491,10 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-import-service\testfiles\HAYOINWHL1771151520260211123403.csv"
-    OUT_PATH = r"C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-import-service\testfiles\HAYOINWHL1771151520260211123403_cleaned.xlsx"
+    PATH = r"C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-import-service\testfiles\AllIP_Rates_Hayo_Telecom_INC_CLI_February_20_2026.xlsx"
+    OUT_PATH = r"C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-import-service\testfiles\AllIP_Rates_Hayo_Telecom_INC_CLI_February_20_2026_cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
-    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='MM-DD-YYYY')
+    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='YYYY-MM-DD')
    
     print('✅ Cleaned and saved.')
