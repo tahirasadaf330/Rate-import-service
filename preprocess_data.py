@@ -740,6 +740,7 @@ ALIAS_MAP = {
     'application_date': 'Effective Date',
     'effective_date_time': 'Effective Date',
     'effective_date_and_time': 'Effective Date',
+    'effective_since': 'Effective Date',
     # Billing Increment
     'billing_increment': 'Billing Increment',
     'billing_increament': 'Billing Increment',   # common typo
