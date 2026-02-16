@@ -739,6 +739,7 @@ ALIAS_MAP = {
     'future_rate_effective_date': 'Effective Date',
     'application_date': 'Effective Date',
     'effective_date_time': 'Effective Date',
+    'effective_date_and_time': 'Effective Date',
     # Billing Increment
     'billing_increment': 'Billing Increment',
     'billing_increament': 'Billing Increment',   # common typo
@@ -1492,8 +1493,8 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\AllIP_Rates_Hayo_Telecom_INC_CLI_February_20_2026.xlsx"
-    OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\cleaned.xlsx"
+    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/HAYO_TELECOM_INC-FULL-20260214.xls"
+    OUT_PATH = "C:/Users/Tahira Sadaf/Documents/attachments/cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
     cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='YYYY-MM-DD')
