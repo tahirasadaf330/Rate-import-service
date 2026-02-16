@@ -692,6 +692,7 @@ ALIAS_MAP = {
     'dial_code': 'Dst Code',
     'breakout' : 'Dst Code',
     'country_code': 'Dst Code',
+    'dialstring': 'Dst Code',
     # Dst Code Name (destination label)
     'dst_code_name': 'Dst Code Name',
     'dstcodename': 'Dst Code Name',
@@ -1491,8 +1492,8 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = r"C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-import-service\testfiles\AllIP_Rates_Hayo_Telecom_INC_CLI_February_20_2026.xlsx"
-    OUT_PATH = r"C:\Users\User\OneDrive - Hayo Telecom, Inc\Documents\Work\Rate Sheet Automation\rate-import-service\testfiles\AllIP_Rates_Hayo_Telecom_INC_CLI_February_20_2026_cleaned.xlsx"
+    PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\AllIP_Rates_Hayo_Telecom_INC_CLI_February_20_2026.xlsx"
+    OUT_PATH = r"C:\Users\Tahira Sadaf\Documents\attachments\cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
     cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='YYYY-MM-DD')

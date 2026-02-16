@@ -265,6 +265,68 @@ class TestMultithreading(unittest.TestCase):
             "comparison skipped: preprocessing failed (final_ok=false)",
         )
 
+    def test_zero_row_jera_treats_vendor_as_full_new(self):
+        """When JeraSoft export has 0 rows but vendor is preprocessed,
+        treat the vendor file as a full-new import instead of skipping."""
+
+        # Prepare metadata to simulate: jera_fetched=True, 0-row Jera export,
+        # preprocessing failed overall (final_ok=False), but vendor file
+        # itself is marked as successfully preprocessed.
+        meta = load_metadata(self.test_dir)
+        meta.pop("comparision_result", None)
+        meta["date_verification_ingestion_status"] = True
+        meta["jerasoft_preprocessed"] = True
+        meta["jera_fetched"] = True
+        meta["human_eval_details_jerasoft"] = {"file": "jerasoft_comparison_all.xlsx", "rows": 0}
+        meta["final_ok"] = False
+        meta["table_id"] = 4330
+
+        # Create a cleaned vendor file that read_table/build_full_new_comparison
+        # can consume to build a comparison-style result.
+        vendor_path = self.test_dir / "vendor1_cleaned.xlsx"
+        df_vendor = pd.DataFrame({
+            "Dst Code": ["1001"],
+            "Rate": [0.05],
+            "Effective Date": ["2025-01-01"],
+            "Billing Increment": ["1/60"],
+        })
+        df_vendor.to_excel(vendor_path, index=False)
+
+        # Mark this vendor file as successfully preprocessed.
+        meta["preprocessed_results"] = {vendor_path.name: True}
+        save_metadata(self.test_dir, meta)
+
+        from unittest.mock import patch
+
+        with patch("multithreading.insert_rate_upload", return_value=123) as mock_insert, \
+             patch("multithreading.bulk_insert_rate_upload_details", return_value=1) as mock_bulk, \
+             patch("multithreading.mark_processing_stage") as mock_stage:
+
+            msg = process_one_folder(self.test_dir)
+
+        # We should reach the DB-push stage and report a successful push.
+        self.assertIn("done (pushed=1/1)", msg)
+
+        # Metadata should record a successful comparison result for the vendor file.
+        meta2 = load_metadata(self.test_dir)
+        comp = meta2.get("comparision_result") or {}
+        self.assertEqual(comp.get("result"), "ok")
+        self.assertTrue(comp.get(vendor_path.name))
+
+        # A comparison result file should have been written for the vendor.
+        result_files = list(self.test_dir.glob("*_comparision_result.xlsx"))
+        self.assertEqual(len(result_files), 1)
+
+        # DB functions should have been invoked.
+        mock_insert.assert_called_once()
+        mock_bulk.assert_called()
+
+        # Zero-row Jera special-case should backfill stage flags via mark_processing_stage.
+        stages = [call.kwargs.get("stage") for call in mock_stage.call_args_list]
+        self.assertIn("file_cleaned", stages)
+        self.assertIn("rate_compared", stages)
+        self.assertIn("rate_uploaded", stages)
+
     def test_run_pipeline_mt(self):
         # Should print no folders to process
         run_pipeline_mt(str(self.test_dir), max_workers=2)
