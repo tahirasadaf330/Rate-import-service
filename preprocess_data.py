@@ -758,6 +758,7 @@ ALIAS_MAP = {
     'bill_incrmnt': 'Billing Increment',
     'initial_recurring': 'Billing Increment',
     'billing_interval': 'Billing Increment',
+    'incr_sec': 'Billing Increment',
 }
 
 
@@ -1494,7 +1495,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/HAYO_TELECOM_INC-FULL-20260214.xls"
+    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/Rate_Amendment_NAWC_to_Hayotel_Standard_02-16-2026.xlsx"
     OUT_PATH = "C:/Users/Tahira Sadaf/Documents/attachments/cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
