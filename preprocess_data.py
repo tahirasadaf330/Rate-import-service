@@ -724,6 +724,7 @@ ALIAS_MAP = {
     'price_min': 'Rate',
     'rate_min': 'Rate',
     'standard_price': 'Rate',
+    'allday': 'Rate',
     # Effective Date
     'effective_date': 'Effective Date',
     'effective': 'Effective Date',
@@ -1308,9 +1309,14 @@ def normalize_dates(df: pd.DataFrame, column_name: str, date_format_email: str |
 
                 def _with_year_first() -> list[str]:
                     return [
+                        # 4-digit year
                         '%Y-%m-%d', '%Y/%m/%d', '%Y.%m.%d',
                         '%Y-%b-%d', '%Y-%B-%d',
-                        '%Y %b %d', '%Y %B %d'
+                        '%Y %b %d', '%Y %B %d',
+                        # 2-digit year at start (yy-mm-dd, yy-bb-dd)
+                        '%y-%m-%d', '%y/%m/%d', '%y.%m.%d',
+                        '%y-%b-%d', '%y-%B-%d',
+                        '%y %b %d', '%y %B %d',
                     ]
 
                 if key == 'mm-dd-yyyy':
@@ -1510,10 +1516,10 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/New_Rates_for_HAYO_TELECOM-20260217.xlsx"
+    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/DGS_CLI_SERVICE_Ratesheet_2026-02-18.xlsx"
     OUT_PATH = "C:/Users/Tahira Sadaf/Documents/attachments/cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
-    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='DD-MM-YYYY')
+    cleaned = load_clean_rates(FILE_PATH, OUTPUT_FILE_PATH, 0, date_format_email='YYYY-MM-DD')
    
     print('✅ Cleaned and saved.')

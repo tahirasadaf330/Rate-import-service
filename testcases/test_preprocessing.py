@@ -199,9 +199,16 @@ class TestDataValidation(unittest.TestCase):
 
 class TestDateParsing(unittest.TestCase):
     """Test date parsing functionality using actual preprocess_data functions."""
-    
+
+    def test_normalize_dates_year_first_two_digit_year(self):
+        """Test that 2-digit year at the start (year-first) is parsed as 20xx with YYYY-MM-DD format."""
+        df = pd.DataFrame({'Effective Date': ['25-Jan-16']})
+        # Should interpret as year=2025, month=01, day=16
+        result_df = normalize_dates(df.copy(), 'Effective Date', 'YYYY-MM-DD')
+        self.assertEqual(result_df['Effective Date'].iloc[0], '2025-01-16')
+
     def setUp(self):
-        """Set up test fixtures.""" 
+        """Set up test fixtures."""
         if not PREPROCESS_AVAILABLE:
             self.skipTest("preprocess_data module not available")
     
