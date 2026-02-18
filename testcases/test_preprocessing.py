@@ -199,9 +199,16 @@ class TestDataValidation(unittest.TestCase):
 
 class TestDateParsing(unittest.TestCase):
     """Test date parsing functionality using actual preprocess_data functions."""
-    
+
+    def test_normalize_dates_year_first_two_digit_year(self):
+        """Test that 2-digit year at the start (year-first) is parsed as 20xx with YYYY-MM-DD format."""
+        df = pd.DataFrame({'Effective Date': ['25-Jan-16']})
+        # Should interpret as year=2025, month=01, day=16
+        result_df = normalize_dates(df.copy(), 'Effective Date', 'YYYY-MM-DD')
+        self.assertEqual(result_df['Effective Date'].iloc[0], '2025-01-16')
+
     def setUp(self):
-        """Set up test fixtures.""" 
+        """Set up test fixtures."""
         if not PREPROCESS_AVAILABLE:
             self.skipTest("preprocess_data module not available")
     
@@ -311,6 +318,23 @@ class TestDateParsing(unittest.TestCase):
 
         self.assertEqual(res_mmdd['Effective Date'].iloc[0], '2026-02-04')
         self.assertEqual(res_ddmm['Effective Date'].iloc[0], '2026-02-04')
+
+    def test_normalize_dates_flexible_two_digit_year_and_names(self):
+        """DD-MM-YYYY/MM-DD-YYYY should also handle 2-digit years and month names."""
+        # DD-MM-YYYY with 2-digit year, numeric month
+        df_ddmm_yy = pd.DataFrame({'Effective Date': ['04-02-26']})  # 4 Feb 2026
+        res_ddmm_yy = normalize_dates(df_ddmm_yy.copy(), 'Effective Date', 'DD-MM-YYYY')
+        self.assertEqual(res_ddmm_yy['Effective Date'].iloc[0], '2026-02-04')
+
+        # DD-MM-YYYY with 2-digit year and short month name
+        df_ddmmm_yy = pd.DataFrame({'Effective Date': ['04-Feb-26']})
+        res_ddmmm_yy = normalize_dates(df_ddmmm_yy.copy(), 'Effective Date', 'DD-MM-YYYY')
+        self.assertEqual(res_ddmmm_yy['Effective Date'].iloc[0], '2026-02-04')
+
+        # MM-DD-YYYY with 2-digit year and short month name
+        df_mmmdd_yy = pd.DataFrame({'Effective Date': ['Feb-04-26']})
+        res_mmmdd_yy = normalize_dates(df_mmmdd_yy.copy(), 'Effective Date', 'MM-DD-YYYY')
+        self.assertEqual(res_mmmdd_yy['Effective Date'].iloc[0], '2026-02-04')
 
     def test_normalize_dates_month_name_strict_formats(self):
         """Validate strict month-name formats with an explicit date_format_email."""

@@ -724,6 +724,7 @@ ALIAS_MAP = {
     'price_min': 'Rate',
     'rate_min': 'Rate',
     'standard_price': 'Rate',
+    'allday': 'Rate',
     # Effective Date
     'effective_date': 'Effective Date',
     'effective': 'Effective Date',
@@ -1201,6 +1202,7 @@ def normalize_dates(df: pd.DataFrame, column_name: str, date_format_email: str |
     def _to_strptime(fmt: str) -> str:
         f = fmt.strip().lower().replace('/', '-').replace('.', '-')
         return (f.replace('yyyy', '%Y')
+                 .replace('yy',   '%y')
                  .replace('mmmm', '%B')
                  .replace('mmm',  '%b')
                  .replace('mm',   '%m')
@@ -1275,27 +1277,46 @@ def normalize_dates(df: pd.DataFrame, column_name: str, date_format_email: str |
 
                 def _with_month_first() -> list[str]:
                     return [
+                        # 4-digit year
                         '%m-%d-%Y', '%m/%d/%Y', '%m.%d.%Y',
                         '%b-%d-%Y', '%B-%d-%Y',
                         '%b %d %Y', '%B %d %Y',
                         '%b %d, %Y', '%B %d, %Y',
-                        '%b/%d/%Y', '%B/%d/%Y'
+                        '%b/%d/%Y', '%B/%d/%Y',
+                        # 2-digit year variants for flexibility
+                        '%m-%d-%y', '%m/%d/%y', '%m.%d.%y',
+                        '%b-%d-%y', '%B-%d-%y',
+                        '%b %d %y', '%B %d %y',
+                        '%b %d, %y', '%B %d, %y',
+                        '%b/%d/%y', '%B/%d/%y',
                     ]
 
                 def _with_day_first() -> list[str]:
                     return [
+                        # 4-digit year
                         '%d-%m-%Y', '%d/%m/%Y', '%d.%m.%Y',
                         '%d-%b-%Y', '%d-%B-%Y',
                         '%d %b %Y', '%d %B %Y',
                         '%d %b, %Y', '%d %B, %Y',
-                        '%d/%b/%Y', '%d/%B/%Y'
+                        '%d/%b/%Y', '%d/%B/%Y',
+                        # 2-digit year variants for flexibility
+                        '%d-%m-%y', '%d/%m/%y', '%d.%m.%y',
+                        '%d-%b-%y', '%d-%B-%y',
+                        '%d %b %y', '%d %B %y',
+                        '%d %b, %y', '%d %B, %y',
+                        '%d/%b/%y', '%d/%B/%y',
                     ]
 
                 def _with_year_first() -> list[str]:
                     return [
+                        # 4-digit year
                         '%Y-%m-%d', '%Y/%m/%d', '%Y.%m.%d',
                         '%Y-%b-%d', '%Y-%B-%d',
-                        '%Y %b %d', '%Y %B %d'
+                        '%Y %b %d', '%Y %B %d',
+                        # 2-digit year at start (yy-mm-dd, yy-bb-dd)
+                        '%y-%m-%d', '%y/%m/%d', '%y.%m.%d',
+                        '%y-%b-%d', '%y-%B-%d',
+                        '%y %b %d', '%y %B %d',
                     ]
 
                 if key == 'mm-dd-yyyy':
@@ -1495,7 +1516,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/Rate_Amendment_NAWC_to_Hayotel_Standard_02-16-2026.xlsx"
+    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/DGS_CLI_SERVICE_Ratesheet_2026-02-18.xlsx"
     OUT_PATH = "C:/Users/Tahira Sadaf/Documents/attachments/cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
