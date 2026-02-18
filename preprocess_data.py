@@ -704,6 +704,7 @@ ALIAS_MAP = {
     'dest_name': 'Dst Code Name',
     'dst_name': 'Dst Code Name',
     'dstname': 'Dst Code Name',
+    'country_name': 'Dst Code Name',
     # Rate
     'rate': 'Rate',
     'rates': 'Rate',
