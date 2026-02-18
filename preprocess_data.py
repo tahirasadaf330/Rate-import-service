@@ -743,6 +743,7 @@ ALIAS_MAP = {
     'effective_date_time': 'Effective Date',
     'effective_date_and_time': 'Effective Date',
     'effective_since': 'Effective Date',
+    'date_effective': 'Effective Date',
     # Billing Increment
     'billing_increment': 'Billing Increment',
     'billing_increament': 'Billing Increment',   # common typo
@@ -1517,7 +1518,7 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/DGS_CLI_SERVICE_Ratesheet_2026-02-18.xlsx"
+    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/HAYO_Dialing_Codes_And_Prefix_CLI.xlsx"
     OUT_PATH = "C:/Users/Tahira Sadaf/Documents/attachments/cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
