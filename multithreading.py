@@ -19,6 +19,9 @@ from database import (
     mark_processing_stage,
     fetch_vendor_date_format_by_sender_email,
     fetch_vendor_context_by_sender_email,
+    vendor_has_pending_jera_upload_today,
+    set_processing_status_text,
+    WAITING_PREVIOUS_VENDOR_PENDING,
 )
 from jerasoft import export_rates_by_query, get_table_id_by_name, fetch_active_current_future_rates, save_rates_to_excel
 
@@ -423,6 +426,34 @@ def process_one_folder(folder: Path) -> str:
         # No DB format: fall back to existing ingest/manual approval gate
         if not bool(meta.get("date_verification_ingestion_status")):
             return f"[{folder.name}] skip: waiting for date verification approval"
+
+    # -------- Vendor/day gating: don't process a new sheet if a previous JeraSoft upload
+    # for this vendor is still pending today. Persist this as a DB-visible "waiting" status.
+    try:
+        sender = str(meta.get("sender") or "").strip() or None
+        internet_message_id = str(
+            meta.get("internet_message_id")
+            or meta.get("internetMessageId")
+            or meta.get("message_id")
+            or ""
+        ).strip() or None
+
+        if vendor_has_pending_jera_upload_today(
+            sender_email=sender,
+            exclude_internet_message_id=internet_message_id,
+        ):
+            try:
+                set_processing_status_text(
+                    directory_name=folder.name,
+                    status_text=WAITING_PREVIOUS_VENDOR_PENDING,
+                )
+            except Exception as e:
+                # Status update failure should not crash the pipeline; still skip processing.
+                print(f"[{folder.name}] warn: failed to set waiting status in DB: {e}")
+            return f"[{folder.name}] skip: {WAITING_PREVIOUS_VENDOR_PENDING}"
+    except Exception:
+        # If the gating check fails (e.g., DB down), keep processing rather than blocking.
+        pass
 
     # -------- 1) JeraSoft export (if needed) --------
     

@@ -1797,3 +1797,96 @@ def auto_update_status_on_import_flag_change():
     except Exception as e:
         print(f"❌ Error auto-updating status: {e}")
         return 0
+
+
+# ─────────────────────── Vendor/day pending-upload gating ───────────────────────
+
+WAITING_PREVIOUS_VENDOR_PENDING = "waiting: previous JeraSoft upload for this vendor today is still pending"
+
+def vendor_has_pending_jera_upload_today(
+    *,
+    sender_email: Optional[str],
+    exclude_internet_message_id: Optional[str] = None,
+) -> bool:
+    """
+    Return True if there exists ANOTHER rate_uploads row for the same sender_email
+    dated today (by received_at if present, else created_at) with a pending JeraSoft upload.
+
+    Pending statuses (per spec): 'pending' or 'pending_bulk'
+
+    Notes:
+    - We exclude the current message id (when provided) to avoid blocking on itself during retries.
+    - We compare sender_email case-insensitively.
+    """
+    email = (sender_email or "").strip()
+    if not email:
+        return False
+
+    # Exclude current item by internet_message_id (best key across retries).
+    exclude_mid = (exclude_internet_message_id or "").strip() or None
+
+    sql = """
+        SELECT 1
+          FROM rate_uploads ru
+         WHERE LOWER(COALESCE(ru.sender_email, '')) = LOWER(%s)
+           AND COALESCE(ru.received_at, ru.created_at)::date = CURRENT_DATE
+           AND ru.jera_upload_status IN ('pending', 'pending_bulk')
+           AND (%s IS NULL OR COALESCE(ru.internet_message_id, '') <> %s)
+         LIMIT 1
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (email, exclude_mid, exclude_mid))
+        row = cur.fetchone()
+        conn.commit()
+        return bool(row)
+
+
+def set_processing_status_text(
+    *,
+    directory_name: Optional[str] = None,
+    internet_message_id: Optional[str] = None,
+    status_text: str,
+    # Never overwrite success/failed by default (per spec: don't clobber terminal statuses).
+    overwrite_terminal: bool = False,
+) -> int:
+    """
+    Update processing_statuses.status to a specific text (e.g., waiting reason).
+
+    By default this will NOT overwrite terminal statuses:
+      - status = 'success'
+      - status LIKE 'failed%'
+
+    Returns number of rows affected.
+    """
+    if not directory_name and not internet_message_id:
+        raise ValueError("provide directory_name or internet_message_id")
+
+    status_text = (status_text or "").strip()
+    if not status_text:
+        raise ValueError("status_text is required")
+
+    if directory_name:
+        where_key_sql, where_key_args = "directory_name = %s", (directory_name,)
+    else:
+        where_key_sql, where_key_args = "internet_message_id = %s", (internet_message_id,)
+
+    terminal_guard_sql = ""
+    if not overwrite_terminal:
+        # IMPORTANT (psycopg2): literal '%' must be escaped as '%%' when query has parameters,
+        # otherwise psycopg2 will treat it like a placeholder and raise "tuple index out of range".
+        terminal_guard_sql = " AND COALESCE(status, '') <> 'success' AND COALESCE(status, '') NOT LIKE 'failed%%'"
+
+    sql = f"""
+        UPDATE processing_statuses
+           SET status = %s,
+               updated_at = NOW()
+         WHERE {where_key_sql}
+               {terminal_guard_sql}
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (status_text,) + where_key_args)
+        affected = cur.rowcount
+        conn.commit()
+        return affected

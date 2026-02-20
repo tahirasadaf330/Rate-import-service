@@ -20,6 +20,44 @@ class TestDatabaseModule(unittest.TestCase):
         self.assertEqual(result[0]['id'], 1)
 
     @patch('database.get_conn')
+    def test_vendor_has_pending_jera_upload_today_cases(self, mock_get_conn):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_get_conn.return_value.__enter__.return_value = mock_conn
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+        # Found a pending row
+        mock_cursor.fetchone.return_value = (1,)
+        self.assertTrue(database.vendor_has_pending_jera_upload_today(sender_email="a@b.com", exclude_internet_message_id="mid-1"))
+
+        # Not found
+        mock_cursor.fetchone.return_value = None
+        self.assertFalse(database.vendor_has_pending_jera_upload_today(sender_email="a@b.com"))
+
+        # Empty sender should be False (and not query DB)
+        self.assertFalse(database.vendor_has_pending_jera_upload_today(sender_email=""))
+
+    @patch('database.get_conn')
+    def test_set_processing_status_text_cases(self, mock_get_conn):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_get_conn.return_value.__enter__.return_value = mock_conn
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_cursor.rowcount = 1
+
+        affected = database.set_processing_status_text(directory_name="dir", status_text="waiting: something")
+        self.assertEqual(affected, 1)
+        mock_conn.commit.assert_called()
+
+        # Missing key should raise
+        with self.assertRaises(ValueError):
+            database.set_processing_status_text(status_text="x")
+
+        # Empty status text should raise
+        with self.assertRaises(ValueError):
+            database.set_processing_status_text(directory_name="dir", status_text="")
+
+    @patch('database.get_conn')
     def test_update_jera_upload_status(self, mock_get_conn):
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
