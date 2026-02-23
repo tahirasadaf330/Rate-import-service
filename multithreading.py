@@ -1070,6 +1070,11 @@ def process_one_folder(folder: Path) -> str:
 
 
     stats_totals = compute_upload_stats(dfs_to_push)
+    try:
+        df_all = pd.concat(dfs_to_push, ignore_index=True)
+        rates_ge_1_usd_count = int((pd.to_numeric(df_all.get("New Rate"), errors="coerce") >= 1.0).sum())
+    except Exception:
+        rates_ge_1_usd_count = 0
 
     sender = str(meta.get("sender") or "").strip() or None
     subject = (meta.get("subject") or "").strip() or None
@@ -1113,6 +1118,7 @@ def process_one_folder(folder: Path) -> str:
                 received_at=received_at,
                 processed_at=processed_at,
                 totals=stats_totals,
+                rates_ge_1_usd_count=rates_ge_1_usd_count,
                 jera_table_id=jera_table_id,
                 comparison_file_path=comparison_file_path,
                 internet_message_id=internet_message_id,
