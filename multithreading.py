@@ -1072,7 +1072,16 @@ def process_one_folder(folder: Path) -> str:
     stats_totals = compute_upload_stats(dfs_to_push)
     try:
         df_all = pd.concat(dfs_to_push, ignore_index=True)
-        rates_ge_1_usd_count = int((pd.to_numeric(df_all.get("New Rate"), errors="coerce") >= 1.0).sum())
+        new_rate_ge_1 = pd.to_numeric(df_all.get("New Rate"), errors="coerce") >= 1.0
+        ct = df_all.get("Change Type")
+        if ct is None:
+            not_unchanged = True
+        else:
+            ct_s = ct.astype(str)
+            # Exclude rows where Change Type includes "Unchanged" (supports multi-label values like "X,Unchanged,Y")
+            is_unchanged = ct_s.str.contains(r"(?:(?<=^)|(?<=,))\s*unchanged\s*(?:(?=,)|(?=$))", case=False, regex=True, na=False)
+            not_unchanged = ~is_unchanged
+        rates_ge_1_usd_count = int((new_rate_ge_1 & not_unchanged).sum())
     except Exception:
         rates_ge_1_usd_count = 0
 
