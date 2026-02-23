@@ -44,6 +44,15 @@ class TestMultithreading(unittest.TestCase):
         self._db_status_patcher.start()
         self.addCleanup(self._db_status_patcher.stop)
 
+        # Prevent unit tests from hitting a real DB for vendor/day pending-upload gating.
+        self._db_vendor_pending_patcher = patch("multithreading.vendor_has_pending_jera_upload_today", return_value=False)
+        self._db_vendor_pending_patcher.start()
+        self.addCleanup(self._db_vendor_pending_patcher.stop)
+
+        self._db_set_status_text_patcher = patch("multithreading.set_processing_status_text", return_value=1)
+        self._db_set_status_text_patcher.start()
+        self.addCleanup(self._db_set_status_text_patcher.stop)
+
         self.test_dir = Path(tempfile.mkdtemp())
         self.meta_path = self.test_dir / "metadata.json"
         self.meta_data = {
@@ -195,6 +204,74 @@ class TestMultithreading(unittest.TestCase):
         save_metadata(self.test_dir, meta)
         msg = process_one_folder(self.test_dir)
         self.assertIn("waiting for date verification approval", msg)
+
+    def test_process_one_folder_sets_waiting_when_vendor_pending_today(self):
+        # If vendor_has_pending_jera_upload_today is True, we should skip processing and persist a DB-visible waiting status.
+        from multithreading import WAITING_PREVIOUS_VENDOR_PENDING
+
+        with patch("multithreading.vendor_has_pending_jera_upload_today", return_value=True) as mock_pending, \
+             patch("multithreading.set_processing_status_text", return_value=1) as mock_set:
+            msg = process_one_folder(self.test_dir)
+
+        self.assertIn("skip", msg.lower())
+        self.assertIn("waiting:", msg.lower())
+        self.assertIn("previous jerasoft upload", msg.lower())
+
+        mock_pending.assert_called()
+        mock_set.assert_called_once()
+        self.assertEqual(mock_set.call_args.kwargs.get("directory_name"), self.test_dir.name)
+        self.assertEqual(mock_set.call_args.kwargs.get("status_text"), WAITING_PREVIOUS_VENDOR_PENDING)
+
+    def test_two_waiting_sheets_advance_one_per_next_run(self):
+        """
+        Scenario:
+          - Run #1: prior JeraSoft upload is pending -> both new sheets go to WAITING.
+          - Run #2: prior upload becomes completed -> first sheet proceeds, but second remains WAITING
+                   because a new pending upload now exists for the first sheet (simulated).
+
+        This verifies the intended behavior: multiple waiting sheets drain one-by-one across runs.
+        """
+        from multithreading import WAITING_PREVIOUS_VENDOR_PENDING
+
+        # Create a second folder with same-vendor metadata
+        d2 = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(d2, ignore_errors=True))
+        meta2 = dict(self.meta_data)
+        meta2["directory"] = str(d2)
+        meta2["comparision_result"] = {"result": "skip for test"}  # avoid heavy pipeline
+        (d2 / "metadata.json").write_text(json.dumps(meta2), encoding="utf-8")
+
+        # Also keep the primary folder lightweight
+        meta1 = load_metadata(self.test_dir)
+        meta1["comparision_result"] = {"result": "skip for test"}
+        save_metadata(self.test_dir, meta1)
+
+        # ---- Run #1: both are blocked -> both become waiting ----
+        with patch("multithreading.vendor_has_pending_jera_upload_today", side_effect=[True, True]) as mock_pending, \
+             patch("multithreading.set_processing_status_text", return_value=1) as mock_set:
+            msg1 = process_one_folder(self.test_dir)
+            msg2 = process_one_folder(d2)
+
+        self.assertIn(WAITING_PREVIOUS_VENDOR_PENDING, msg1)
+        self.assertIn(WAITING_PREVIOUS_VENDOR_PENDING, msg2)
+        self.assertEqual(mock_pending.call_count, 2)
+        self.assertEqual(mock_set.call_count, 2)
+
+        # ---- Run #2: prior pending cleared -> first proceeds; second still blocked ----
+        # Simulate DB behavior:
+        # - first call sees no previous pending (False)
+        # - second call sees a new pending created by the first sheet (True)
+        with patch("multithreading.vendor_has_pending_jera_upload_today", side_effect=[False, True]) as mock_pending2, \
+             patch("multithreading.set_processing_status_text", return_value=1) as mock_set2:
+            msg1b = process_one_folder(self.test_dir)
+            msg2b = process_one_folder(d2)
+
+        # First should NOT be waiting now
+        self.assertNotIn("waiting:", msg1b.lower())
+        # Second should still be waiting
+        self.assertIn(WAITING_PREVIOUS_VENDOR_PENDING, msg2b)
+        self.assertEqual(mock_pending2.call_count, 2)
+        self.assertEqual(mock_set2.call_count, 1)  # only the second sheet is blocked in run #2
 
     def test_process_one_folder_db_format_overrides_metadata(self):
         # Ensure folder is NOT approved in metadata, but DB has format -> should proceed past approval gate
