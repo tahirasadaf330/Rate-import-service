@@ -411,7 +411,7 @@ def insert_rate_upload(
     received_at: Optional[datetime] = None,
     processed_at: Optional[datetime] = None,
     totals: Optional[Dict[str, int]] = None,
-    rates_ge_1_usd_count: int = 0,
+    rates_gte_one_usd_count: int = 0,
     jera_table_id: Optional[int] = None,
     comparison_file_path: Optional[str] = None,
     internet_message_id: Optional[str] = None,
@@ -445,7 +445,7 @@ def insert_rate_upload(
         (subject, sender_email, received_at, processed_at, internet_message_id,
          total_rows, "new", increase, decrease, unchanged, closed, stashed,
          backdated_increase, backdated_decrease, billing_increment_changes,
-         rates_ge_1_usd_count,
+         rates_gte_one_usd_count,
          jera_table_id, comparison_file_path, created_at, updated_at)
         VALUES
         (%s, %s, COALESCE(%s, NOW()), %s, %s,
@@ -474,7 +474,7 @@ def insert_rate_upload(
                 t["backdated_increase"],
                 t["backdated_decrease"],
                 t["billing_increment_changes"],
-                int(rates_ge_1_usd_count or 0),
+                int(rates_gte_one_usd_count or 0),
                 jera_table_id,
                 comparison_file_path,
             ),

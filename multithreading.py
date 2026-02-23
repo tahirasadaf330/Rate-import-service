@@ -1081,9 +1081,9 @@ def process_one_folder(folder: Path) -> str:
             # Exclude rows where Change Type includes "Unchanged" (supports multi-label values like "X,Unchanged,Y")
             is_unchanged = ct_s.str.contains(r"(?:(?<=^)|(?<=,))\s*unchanged\s*(?:(?=,)|(?=$))", case=False, regex=True, na=False)
             not_unchanged = ~is_unchanged
-        rates_ge_1_usd_count = int((new_rate_ge_1 & not_unchanged).sum())
+        rates_gte_one_usd_count = int((new_rate_ge_1 & not_unchanged).sum())
     except Exception:
-        rates_ge_1_usd_count = 0
+        rates_gte_one_usd_count = 0
 
     sender = str(meta.get("sender") or "").strip() or None
     subject = (meta.get("subject") or "").strip() or None
@@ -1127,7 +1127,7 @@ def process_one_folder(folder: Path) -> str:
                 received_at=received_at,
                 processed_at=processed_at,
                 totals=stats_totals,
-                rates_ge_1_usd_count=rates_ge_1_usd_count,
+                rates_gte_one_usd_count=rates_gte_one_usd_count,
                 jera_table_id=jera_table_id,
                 comparison_file_path=comparison_file_path,
                 internet_message_id=internet_message_id,
