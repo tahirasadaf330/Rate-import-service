@@ -1195,12 +1195,34 @@ def run_pipeline_mt(attachments_base: str = "attachments", max_workers: int = 4)
         print("[PIPELINE] no folders to process.")
         return
 
+    # IMPORTANT: serialize processing per vendor (per sender email).
+    # Otherwise two folders from the same vendor can start at the same time,
+    # both pass the DB "pending upload?" check, and both end up processing/pending.
+    queues: dict[str, list[Path]] = {}
+    for d in folders:
+        meta = load_metadata(d) or {}
+        sender = str(meta.get("sender") or "").strip().casefold() or "__unknown_sender__"
+        queues.setdefault(sender, []).append(d)
+
+    for q in queues.values():
+        q.sort(key=lambda p: p.name)
+
     print(f"[PIPELINE] starting multithread pipeline: {len(folders)} folder(s), workers={max_workers}")
-    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="pipe") as ex:
-        futs = {ex.submit(process_one_folder, d): d for d in folders}
-        for fut in as_completed(futs):
+
+    def _process_vendor_queue(vendor_key: str, vendor_folders: list[Path]) -> None:
+        for d in vendor_folders:
             try:
-                msg = fut.result()
+                msg = process_one_folder(d)
             except Exception as e:
-                msg = f"[{futs[fut].name}] ✖ pipeline error: {e}\n{traceback.format_exc()}"  # >>> CHANGED
+                msg = f"[{d.name}] ✖ pipeline error: {e}\n{traceback.format_exc()}"
             print(msg)
+
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="pipe") as ex:
+        futs = [
+            ex.submit(_process_vendor_queue, vendor_key, vendor_folders)
+            for vendor_key, vendor_folders in queues.items()
+        ]
+        for fut in as_completed(futs):
+            # surface any unexpected exceptions
+            fut.result()
+
