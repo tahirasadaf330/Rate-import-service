@@ -631,34 +631,54 @@ def fetch_vendor_context_by_sender_email(email: Optional[str]) -> Dict[str, Any]
       vendor_contacts.email -> vendor_contacts.vendor_id -> vendors.date_format
 
     Returns:
-      {"vendor_id": Optional[int], "vendor_date_format": Optional[str]}
+      {"vendor_id": Optional[int], "vendor_date_format": Optional[str], "is_partial": bool}
     """
-    out: Dict[str, Any] = {"vendor_id": None, "vendor_date_format": None}
+    out: Dict[str, Any] = {"vendor_id": None, "vendor_date_format": None, "is_partial": False}
     if not email:
         return out
     e = str(email).strip()
     if not e:
         return out
 
-    sql = """
-        SELECT vc.vendor_id, v.date_format
-        FROM vendor_contacts vc
-        JOIN vendors v ON v.id = vc.vendor_id
-        WHERE LOWER(vc.email) = LOWER(%s)
-          AND COALESCE(vc.status, TRUE) = TRUE
-          AND COALESCE(v.status, TRUE) = TRUE
-        ORDER BY vc.id ASC
-        LIMIT 1
-    """
     try:
         with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(sql, (e,))
-            row = cur.fetchone()
+            # Prefer vendors.is_partial when present; fallback to vendors.partial if that's the column name.
+            try:
+                cur.execute(
+                    """
+                    SELECT vc.vendor_id, v.date_format, COALESCE(v.is_partial, FALSE) AS is_partial
+                    FROM vendor_contacts vc
+                    JOIN vendors v ON v.id = vc.vendor_id
+                    WHERE LOWER(vc.email) = LOWER(%s)
+                      AND COALESCE(vc.status, TRUE) = TRUE
+                      AND COALESCE(v.status, TRUE) = TRUE
+                    ORDER BY vc.id ASC
+                    LIMIT 1
+                    """,
+                    (e,),
+                )
+                row = cur.fetchone()
+            except Exception:
+                cur.execute(
+                    """
+                    SELECT vc.vendor_id, v.date_format, COALESCE(v.partial, FALSE) AS is_partial
+                    FROM vendor_contacts vc
+                    JOIN vendors v ON v.id = vc.vendor_id
+                    WHERE LOWER(vc.email) = LOWER(%s)
+                      AND COALESCE(vc.status, TRUE) = TRUE
+                      AND COALESCE(v.status, TRUE) = TRUE
+                    ORDER BY vc.id ASC
+                    LIMIT 1
+                    """,
+                    (e,),
+                )
+                row = cur.fetchone()
         if not row:
             return out
-        vendor_id, fmt = row[0], row[1]
+        vendor_id, fmt, is_partial = row[0], row[1], row[2]
         out["vendor_id"] = int(vendor_id) if vendor_id is not None else None
         out["vendor_date_format"] = (str(fmt).strip() if fmt is not None else None) or None
+        out["is_partial"] = bool(is_partial)
         return out
     except Exception:
         return out

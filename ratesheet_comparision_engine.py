@@ -139,6 +139,7 @@ def compare(
     notice_days: int,
     rate_tol: float,
     *,
+    is_partial: bool = False,
     progress_every: int = 0,
 ) -> pd.DataFrame:
     # Keep originals for stash logic (Jera extract can contain multiple future rates per code).
@@ -290,6 +291,9 @@ def compare(
             continue
 
         if left_only[i]:
+            # For partial vendor sheets, missing codes should NOT be treated as "Closed".
+            if is_partial:
+                continue
             rows.append({"Code": code, "Dst Code Name": dst_name, "Old Rate": o_rate, "New Rate": n_rate,  "Old Billing Increment": bi_old, "New Billing Increment": bi_new, "Effective Date": n_date, "Status": "Rejected", "Change Type": "Closed", "Notes": "present in current system but missing in new (closed)"})
             continue
 
