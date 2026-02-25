@@ -415,6 +415,7 @@ def insert_rate_upload(
     jera_table_id: Optional[int] = None,
     comparison_file_path: Optional[str] = None,
     internet_message_id: Optional[str] = None,
+    processing_status_id: Optional[int] = None,
 ) -> int:
     """
     Insert one row into rate_uploads with summary counters.
@@ -442,13 +443,13 @@ def insert_rate_upload(
 
     sql = """
         INSERT INTO rate_uploads
-        (subject, sender_email, received_at, processed_at, internet_message_id,
+        (subject, sender_email, received_at, processed_at, internet_message_id, processing_status_id,
          total_rows, "new", increase, decrease, unchanged, closed, stashed,
          backdated_increase, backdated_decrease, billing_increment_changes,
          rates_gte_one_usd_count,
          jera_table_id, comparison_file_path, created_at, updated_at)
         VALUES
-        (%s, %s, COALESCE(%s, NOW()), %s, %s,
+        (%s, %s, COALESCE(%s, NOW()), %s, %s, %s,
          %s, %s, %s, %s, %s, %s, %s,
          %s, %s, %s, %s, %s, %s,
          NOW(), NOW())
@@ -464,6 +465,7 @@ def insert_rate_upload(
                 received_at,
                 processed_at,
                 internet_message_id,
+                processing_status_id,
                 t["total_rows"],
                 t["new"],
                 t["increase"],
@@ -681,6 +683,7 @@ def insert_or_update_ingest_file(
     processed_at: Optional[datetime],
     file_path: str,
     internet_message_id: Optional[str] = None,
+    processing_status_id: Optional[int] = None,
     preview_cache: Optional[Dict[str, Any]] = None,
     error_message: Optional[str] = None,
     # new optional fields
@@ -695,6 +698,7 @@ def insert_or_update_ingest_file(
         Columns written:
             email_address, subject, received_at, processed_at, file_path,
             internet_message_id,
+            processing_status_id,
             preview_cache, error_message,
             status, date_format, approved_at, is_format_auto_detected
     """
@@ -718,6 +722,7 @@ def insert_or_update_ingest_file(
             processed_at,
             file_path,
             internet_message_id,
+            processing_status_id,
             preview_cache,
             error_message,
             status,
@@ -734,6 +739,7 @@ def insert_or_update_ingest_file(
             %(processed_at)s,
             %(file_path)s,
             %(internet_message_id)s,
+            %(processing_status_id)s,
             %(preview_cache)s,
             %(error_message)s,
             %(status)s,
@@ -749,6 +755,7 @@ def insert_or_update_ingest_file(
             received_at             = EXCLUDED.received_at,
             processed_at            = EXCLUDED.processed_at,
             internet_message_id     = EXCLUDED.internet_message_id,
+            processing_status_id    = COALESCE(EXCLUDED.processing_status_id, ingest_files.processing_status_id),
             preview_cache           = EXCLUDED.preview_cache,
             error_message           = EXCLUDED.error_message,
             status                  = EXCLUDED.status,
@@ -766,6 +773,7 @@ def insert_or_update_ingest_file(
         "processed_at": processed_at,
         "file_path": file_path,
         "internet_message_id": internet_message_id,
+        "processing_status_id": processing_status_id,
         "preview_cache": Json(preview_cache) if preview_cache is not None else None,
         "error_message": error_message,
         "status": status,
@@ -807,6 +815,7 @@ def bulk_upsert_ingest_files(
             r.get("processed_at"),
             fp,
             r.get("internet_message_id"),
+            r.get("processing_status_id"),
             Json(r.get("preview_cache")) if r.get("preview_cache") is not None else None,
             r.get("error_message"),
         ))
@@ -822,6 +831,7 @@ def bulk_upsert_ingest_files(
             processed_at,
             file_path,
             internet_message_id,
+            processing_status_id,
             preview_cache,
             error_message,
             created_at,
@@ -833,11 +843,12 @@ def bulk_upsert_ingest_files(
             subject       = EXCLUDED.subject,
             received_at   = EXCLUDED.received_at,
             processed_at  = EXCLUDED.processed_at,
+            processing_status_id = COALESCE(EXCLUDED.processing_status_id, ingest_files.processing_status_id),
             preview_cache = EXCLUDED.preview_cache,
             error_message = EXCLUDED.error_message,
             updated_at    = NOW()
     """
-    tpl = "(%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())"
+    tpl = "(%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())"
 
     with get_conn() as conn, conn.cursor() as cur:
         execute_values(cur, sql, prepared, template=tpl, page_size=page_size)

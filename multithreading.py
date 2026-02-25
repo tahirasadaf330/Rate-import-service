@@ -22,6 +22,7 @@ from database import (
     vendor_has_pending_jera_upload_today,
     set_processing_status_text,
     WAITING_PREVIOUS_VENDOR_PENDING,
+    get_processing_status,
 )
 from jerasoft import export_rates_by_query, get_table_id_by_name, fetch_active_current_future_rates, save_rates_to_excel
 
@@ -1118,6 +1119,13 @@ def process_one_folder(folder: Path) -> str:
         or ""
     ).strip() or None
 
+    processing_status_id = None
+    try:
+        ps = get_processing_status(directory_name=folder.name)
+        processing_status_id = int(ps["id"]) if ps and ps.get("id") is not None else None
+    except Exception:
+        processing_status_id = None
+
     upload_id = meta.get("rate_upload_id")
     if not upload_id:
         try:
@@ -1131,6 +1139,7 @@ def process_one_folder(folder: Path) -> str:
                 jera_table_id=jera_table_id,
                 comparison_file_path=comparison_file_path,
                 internet_message_id=internet_message_id,
+                processing_status_id=processing_status_id,
             )
             meta["rate_upload_id"] = int(upload_id)
             save_metadata(folder, meta)

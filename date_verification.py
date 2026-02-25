@@ -3,6 +3,7 @@ from database import (
     insert_or_update_ingest_file,
     fetch_vendor_date_format_by_sender_email,
     fetch_vendor_context_by_sender_email,
+    get_processing_status,
 )
 from datetime import date, datetime, timezone
 import pandas as pd
@@ -234,6 +235,13 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
             })
 
         try:
+            processing_status_id = None
+            try:
+                ps = get_processing_status(directory_name=folder.name)
+                processing_status_id = int(ps["id"]) if ps and ps.get("id") is not None else None
+            except Exception:
+                processing_status_id = None
+
             _id = insert_or_update_ingest_file(
                 email_address=email_address,
                 subject=subject,
@@ -241,6 +249,7 @@ def ingest_files_for_manual_date(attachments_root: str | Path = "attachments") -
                 processed_at=processed_at,
                 file_path=file_path,
                 internet_message_id=internet_message_id,
+                processing_status_id=processing_status_id,
                 preview_cache=preview_cache,
                 error_message=error_message,
                 **upsert_kwargs,  # only applies if autodetected True
