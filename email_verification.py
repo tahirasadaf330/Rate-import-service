@@ -1040,6 +1040,16 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
             }
             if override_table_name:
                 meta["force_jerasoft_table_name"] = override_table_name  # <-- NEW
+                # If subject parsing failed but we have an override table name containing "PREFIX:####",
+                # derive prefix from it so downstream gating can use vendor+prefix logic.
+                if not meta.get("prefix"):
+                    try:
+                        s = str(override_table_name or "")
+                        m = re.search(r"\bprefix\b\s*[:\s-]*\s*(none|\d+)", s, flags=re.IGNORECASE)
+                        if m:
+                            meta["prefix"] = "NONE" if m.group(1).strip().lower() == "none" else m.group(1).strip()
+                    except Exception:
+                        pass
 
             write_metadata(save_dir, meta)
 

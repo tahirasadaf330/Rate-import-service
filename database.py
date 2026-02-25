@@ -1817,11 +1817,13 @@ WAITING_PREVIOUS_VENDOR_PENDING = "waiting: previous JeraSoft upload for this ve
 def vendor_has_pending_jera_upload_today(
     *,
     sender_email: Optional[str],
+    prefix: Optional[str] = None,
     exclude_internet_message_id: Optional[str] = None,
 ) -> bool:
     """
     Return True if there exists ANOTHER rate_uploads row for the same sender_email
-    dated today (by received_at if present, else created_at) with a pending JeraSoft upload.
+    dated today (by received_at if present, else created_at) with a pending JeraSoft upload,
+    AND the pending row has the SAME prefix as the current sheet.
 
     Pending statuses (per spec): 'pending' or 'pending_bulk'
 
@@ -1833,24 +1835,65 @@ def vendor_has_pending_jera_upload_today(
     if not email:
         return False
 
+    # Only gate when the current sheet has a usable prefix.
+    pref = (str(prefix).strip() if prefix is not None else "") or None
+    if not pref:
+        return False
+
     # Exclude current item by internet_message_id (best key across retries).
     exclude_mid = (exclude_internet_message_id or "").strip() or None
 
     sql = """
-        SELECT 1
+        SELECT ru.subject
           FROM rate_uploads ru
          WHERE LOWER(COALESCE(ru.sender_email, '')) = LOWER(%s)
            AND COALESCE(ru.received_at, ru.created_at)::date = CURRENT_DATE
            AND ru.jera_upload_status IN ('pending', 'pending_bulk')
            AND (%s IS NULL OR COALESCE(ru.internet_message_id, '') <> %s)
-         LIMIT 1
+         ORDER BY COALESCE(ru.received_at, ru.created_at) ASC, ru.id ASC
+         LIMIT 50
     """
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, (email, exclude_mid, exclude_mid))
-        row = cur.fetchone()
+        rows = cur.fetchall()
         conn.commit()
-        return bool(row)
+        if not rows:
+            return False
+
+    # Compare prefixes by parsing the stored subject (same logic used when building metadata.json).
+    try:
+        from email_verification import validate_subject  # local import to avoid circular deps at import time
+    except Exception:
+        # If we can't parse, be conservative and don't block processing.
+        return False
+
+    want = pref.upper() if pref.upper() == "NONE" else pref
+    for (subj,) in rows:
+        parsed = None
+        try:
+            parsed = validate_subject(subj)
+        except Exception:
+            parsed = None
+        got = (parsed or {}).get("prefix")
+        got_s = str(got).strip() if got is not None else ""
+        if not got_s:
+            # Fallback for subjects like ".... PREFIX:1234 [USD]" which don't match validate_subject().
+            try:
+                import re as _re
+                s = str(subj or "")
+                m = _re.search(r"\bprefix\b\s*[:\s-]*\s*(none|\d+)", s, flags=_re.IGNORECASE)
+                if m:
+                    got_s = "NONE" if m.group(1).strip().lower() == "none" else m.group(1).strip()
+            except Exception:
+                got_s = ""
+        if not got_s:
+            continue
+        got_norm = got_s.upper() if got_s.upper() == "NONE" else got_s
+        if got_norm == want:
+            return True
+
+    return False
 
 
 def set_processing_status_text(

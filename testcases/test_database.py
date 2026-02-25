@@ -27,12 +27,12 @@ class TestDatabaseModule(unittest.TestCase):
         mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
         # Found a pending row
-        mock_cursor.fetchone.return_value = (1,)
-        self.assertTrue(database.vendor_has_pending_jera_upload_today(sender_email="a@b.com", exclude_internet_message_id="mid-1"))
+        mock_cursor.fetchall.return_value = [("[X] [TRUNK] [1001] [USD]",)]
+        self.assertTrue(database.vendor_has_pending_jera_upload_today(sender_email="a@b.com", prefix="1001", exclude_internet_message_id="mid-1"))
 
         # Not found
-        mock_cursor.fetchone.return_value = None
-        self.assertFalse(database.vendor_has_pending_jera_upload_today(sender_email="a@b.com"))
+        mock_cursor.fetchall.return_value = []
+        self.assertFalse(database.vendor_has_pending_jera_upload_today(sender_email="a@b.com", prefix="1001"))
 
         # Empty sender should be False (and not query DB)
         self.assertFalse(database.vendor_has_pending_jera_upload_today(sender_email=""))

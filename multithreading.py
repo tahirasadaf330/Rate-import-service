@@ -432,6 +432,17 @@ def process_one_folder(folder: Path) -> str:
     # for this vendor is still pending today. Persist this as a DB-visible "waiting" status.
     try:
         sender = str(meta.get("sender") or "").strip() or None
+        prefix = meta.get("prefix")
+        if not prefix:
+            # Some subjects are "approved" via invalid_subject_details and won't populate metadata.prefix.
+            # In that case, derive prefix from the subject text like "PREFIX:1234".
+            try:
+                subj_raw = str(meta.get("subject") or "")
+                m = re.search(r"\bprefix\b\s*[:\s-]*\s*(none|\d+)", subj_raw, flags=re.IGNORECASE)
+                if m:
+                    prefix = "NONE" if m.group(1).strip().lower() == "none" else m.group(1).strip()
+            except Exception:
+                pass
         internet_message_id = str(
             meta.get("internet_message_id")
             or meta.get("internetMessageId")
@@ -441,6 +452,7 @@ def process_one_folder(folder: Path) -> str:
 
         if vendor_has_pending_jera_upload_today(
             sender_email=sender,
+            prefix=prefix,
             exclude_internet_message_id=internet_message_id,
         ):
             try:
