@@ -432,6 +432,17 @@ def process_one_folder(folder: Path) -> str:
     # for this vendor is still pending today. Persist this as a DB-visible "waiting" status.
     try:
         sender = str(meta.get("sender") or "").strip() or None
+        prefix = meta.get("prefix")
+        if not prefix:
+            # Some subjects are "approved" via invalid_subject_details and won't populate metadata.prefix.
+            # In that case, derive prefix from the subject text like "PREFIX:1234".
+            try:
+                subj_raw = str(meta.get("subject") or "")
+                m = re.search(r"\bprefix\b\s*[:\s-]*\s*(none|\d+)", subj_raw, flags=re.IGNORECASE)
+                if m:
+                    prefix = "NONE" if m.group(1).strip().lower() == "none" else m.group(1).strip()
+            except Exception:
+                pass
         internet_message_id = str(
             meta.get("internet_message_id")
             or meta.get("internetMessageId")
@@ -441,6 +452,7 @@ def process_one_folder(folder: Path) -> str:
 
         if vendor_has_pending_jera_upload_today(
             sender_email=sender,
+            prefix=prefix,
             exclude_internet_message_id=internet_message_id,
         ):
             try:
@@ -1219,21 +1231,35 @@ def run_pipeline_mt(attachments_base: str = "attachments", max_workers: int = 4)
         print("[PIPELINE] no folders to process.")
         return
 
-    # IMPORTANT: serialize processing per vendor (per sender email).
-    # Otherwise two folders from the same vendor can start at the same time,
-    # both pass the DB "pending upload?" check, and both end up processing/pending.
-    queues: dict[str, list[Path]] = {}
+    # IMPORTANT: serialize processing per vendor+prefix (per sender email + prefix).
+    # Our business rule blocks only vendor+prefix when a pending upload exists today,
+    # so vendor A / prefix 1001 can run in parallel with vendor A / prefix 2002.
+    queues: dict[tuple[str, str], list[Path]] = {}
     for d in folders:
         meta = load_metadata(d) or {}
         sender = str(meta.get("sender") or "").strip().casefold() or "__unknown_sender__"
-        queues.setdefault(sender, []).append(d)
+        prefix = meta.get("prefix")
+        if not prefix:
+            # Derive prefix when metadata.prefix isn't populated (e.g., override-approved subjects).
+            try:
+                for src in (meta.get("force_jerasoft_table_name"), meta.get("subject")):
+                    s = str(src or "")
+                    m = re.search(r"\bprefix\b\s*[:\s-]*\s*(none|\d+)", s, flags=re.IGNORECASE)
+                    if m:
+                        prefix = "NONE" if m.group(1).strip().lower() == "none" else m.group(1).strip()
+                        break
+            except Exception:
+                prefix = None
+        prefix_key = (str(prefix).strip() if prefix is not None else "") or "__unknown_prefix__"
+        key = (sender, prefix_key.casefold())
+        queues.setdefault(key, []).append(d)
 
     for q in queues.values():
         q.sort(key=lambda p: p.name)
 
     print(f"[PIPELINE] starting multithread pipeline: {len(folders)} folder(s), workers={max_workers}")
 
-    def _process_vendor_queue(vendor_key: str, vendor_folders: list[Path]) -> None:
+    def _process_vendor_queue(vendor_key: tuple[str, str], vendor_folders: list[Path]) -> None:
         for d in vendor_folders:
             try:
                 msg = process_one_folder(d)
