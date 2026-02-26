@@ -30,6 +30,43 @@ from jerasoft import export_rates_by_query, get_table_id_by_name, fetch_active_c
 ALLOWED_EXTS = {".xlsx", ".xls", ".csv"}
 EXPECTED_COLS = ["Code", "Old Rate", "New Rate", "Effective Date", "Status", "Change Type", "Notes"]
 
+def _derive_prefix(meta: Dict[str, Any]) -> Optional[str]:
+    """
+    Derive a normalized prefix string from metadata.
+
+    Order:
+      1) meta["prefix"]
+      2) meta["force_jerasoft_table_name"]
+      3) meta["subject"]
+
+    Normalization:
+      - "none" -> "NONE"
+      - digits preserved as string
+      - returns None if not found
+    """
+    def _norm(val: object) -> Optional[str]:
+        if val is None:
+            return None
+        s = str(val).strip()
+        if not s:
+            return None
+        return "NONE" if s.casefold() == "none" else s
+
+    direct = _norm(meta.get("prefix"))
+    if direct:
+        return direct
+
+    try:
+        for src in (meta.get("force_jerasoft_table_name"), meta.get("subject")):
+            s = str(src or "")
+            m = re.search(r"\bprefix\b\s*[:\s-]*\s*(none|\d+)", s, flags=re.IGNORECASE)
+            if m:
+                return "NONE" if m.group(1).strip().lower() == "none" else m.group(1).strip()
+    except Exception:
+        return None
+
+    return None
+
 def load_metadata(folder: Path) -> Optional[Dict[str, Any]]:
     meta = folder / "metadata.json"
     if not meta.exists():
@@ -432,17 +469,7 @@ def process_one_folder(folder: Path) -> str:
     # for this vendor is still pending today. Persist this as a DB-visible "waiting" status.
     try:
         sender = str(meta.get("sender") or "").strip() or None
-        prefix = meta.get("prefix")
-        if not prefix:
-            # Some subjects are "approved" via invalid_subject_details and won't populate metadata.prefix.
-            # In that case, derive prefix from the subject text like "PREFIX:1234".
-            try:
-                subj_raw = str(meta.get("subject") or "")
-                m = re.search(r"\bprefix\b\s*[:\s-]*\s*(none|\d+)", subj_raw, flags=re.IGNORECASE)
-                if m:
-                    prefix = "NONE" if m.group(1).strip().lower() == "none" else m.group(1).strip()
-            except Exception:
-                pass
+        prefix = _derive_prefix(meta)
         internet_message_id = str(
             meta.get("internet_message_id")
             or meta.get("internetMessageId")
@@ -473,7 +500,7 @@ def process_one_folder(folder: Path) -> str:
     if not bool(meta.get("jerasoft_preprocessed")):
         company     = (meta.get("company") or "").strip()
         subject     = (meta.get("subject") or "").strip()
-        prefix      = meta.get("prefix")
+        prefix      = _derive_prefix(meta)
         dir_path    = meta.get("directory")
         attachments = meta.get("attachments", [])
         force_table = (meta.get("force_jerasoft_table_name") or "").strip()
@@ -1238,18 +1265,7 @@ def run_pipeline_mt(attachments_base: str = "attachments", max_workers: int = 4)
     for d in folders:
         meta = load_metadata(d) or {}
         sender = str(meta.get("sender") or "").strip().casefold() or "__unknown_sender__"
-        prefix = meta.get("prefix")
-        if not prefix:
-            # Derive prefix when metadata.prefix isn't populated (e.g., override-approved subjects).
-            try:
-                for src in (meta.get("force_jerasoft_table_name"), meta.get("subject")):
-                    s = str(src or "")
-                    m = re.search(r"\bprefix\b\s*[:\s-]*\s*(none|\d+)", s, flags=re.IGNORECASE)
-                    if m:
-                        prefix = "NONE" if m.group(1).strip().lower() == "none" else m.group(1).strip()
-                        break
-            except Exception:
-                prefix = None
+        prefix = _derive_prefix(meta)
         prefix_key = (str(prefix).strip() if prefix is not None else "") or "__unknown_prefix__"
         key = (sender, prefix_key.casefold())
         queues.setdefault(key, []).append(d)
