@@ -726,6 +726,7 @@ ALIAS_MAP = {
     'rate_min': 'Rate',
     'standard_price': 'Rate',
     'allday': 'Rate',
+    'active_rate': 'Rate',
     # Effective Date
     'effective_date': 'Effective Date',
     'effective': 'Effective Date',
