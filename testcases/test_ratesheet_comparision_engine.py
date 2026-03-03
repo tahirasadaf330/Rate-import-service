@@ -17,6 +17,7 @@ import numpy as np
 import os
 import tempfile
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 from ratesheet_comparision_engine import (
     read_table, keep_latest_per_code, validate_row, effective_note,
@@ -224,6 +225,11 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
                 self.assertGreaterEqual(stats[key], 1)
 
     def test_compare(self):
+        # compare() prints unicode glyphs; mock print to keep tests portable on Windows consoles.
+        _print = patch("builtins.print")
+        _print.start()
+        self.addCleanup(_print.stop)
+
         # New code in right only
         left = pd.DataFrame({
             COL_CODE: ['1001'],
@@ -272,6 +278,10 @@ class TestRatesheetComparisonEngine(unittest.TestCase):
                 self.assertEqual(stats[k], 1)
                 found = True
         self.assertTrue(found, f"No 'Closed' key variant found in stats: {stats}")
+
+        # Closed should be skipped for partial sheets (left_only codes are ignored)
+        result_partial, stats_partial = compare(left, right, as_of_date='2025-01-01', notice_days=7, rate_tol=0.0, is_partial=True)
+        self.assertNotIn('Closed', result_partial['Change Type'].values)
 
         # Unchanged
         left = pd.DataFrame({

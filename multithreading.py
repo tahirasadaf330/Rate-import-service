@@ -439,13 +439,16 @@ def process_one_folder(folder: Path) -> str:
     # DB is source-of-truth for date format, based on vendor:
     # sender email -> vendor_contacts -> vendors.date_format
     vendor_fmt = None
-    vendor_ctx: Dict[str, Any] = {"vendor_id": None, "vendor_date_format": None}
+    is_partial_vendor = False
+    vendor_ctx: Dict[str, Any] = {"vendor_id": None, "vendor_date_format": None, "is_partial": False}
     try:
         vendor_ctx = fetch_vendor_context_by_sender_email(meta.get("sender"))
         vendor_fmt = vendor_ctx.get("vendor_date_format") or None
+        is_partial_vendor = bool(vendor_ctx.get("is_partial"))
     except Exception:
-        vendor_ctx = {"vendor_id": None, "vendor_date_format": None}
+        vendor_ctx = {"vendor_id": None, "vendor_date_format": None, "is_partial": False}
         vendor_fmt = None
+        is_partial_vendor = False
 
     if vendor_fmt:
         # Override metadata (even if it was auto-detected as YYYY-MM-DD)
@@ -956,7 +959,7 @@ def process_one_folder(folder: Path) -> str:
                     # exact match mode (no tolerance)
                     # show progress for large comparisons so it doesn't look "stuck"
                     progress_every = int(os.getenv("COMPARE_PROGRESS_EVERY", "0") or "0")
-                    result, stats = compare(left_df, right_df, as_of_date, 7, 0.0, progress_every=progress_every)
+                    result, stats = compare(left_df, right_df, as_of_date, 7, 0.0, is_partial=is_partial_vendor, progress_every=progress_every)
                     out_path = folder / f"{v.stem}_comparision_result.xlsx"
                     write_excel(result, str(out_path))
                     print(f"[{folder.name}] wrote result to {out_path}")

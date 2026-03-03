@@ -222,6 +222,56 @@ class TestMultithreading(unittest.TestCase):
         self.assertEqual(mock_set.call_args.kwargs.get("directory_name"), self.test_dir.name)
         self.assertEqual(mock_set.call_args.kwargs.get("status_text"), WAITING_PREVIOUS_VENDOR_PENDING)
 
+    def test_partial_vendor_passes_flag_to_compare(self):
+        # Create baseline + vendor files and mark them as preprocessed so we reach compare().
+        baseline = self.test_dir / "jerasoft_comparison_all_cleaned.xlsx"
+        vendor = self.test_dir / "vendor1_cleaned.xlsx"
+
+        baseline_df = pd.DataFrame({
+            "Dst Code": ["1001", "1002"],
+            "Rate": [0.05, 0.06],
+            "Effective Date": [datetime(2026, 1, 1), datetime(2026, 1, 1)],
+            "Billing Increment": ["1/60", "1/60"],
+        })
+        vendor_df = pd.DataFrame({
+            "Dst Code": ["1001"],
+            "Rate": [0.05],
+            "Effective Date": [datetime(2026, 1, 1)],
+            "Billing Increment": ["1/60"],
+        })
+        baseline_df.to_excel(baseline, index=False)
+        vendor_df.to_excel(vendor, index=False)
+
+        meta = load_metadata(self.test_dir) or {}
+        meta["preprocessed_results"] = {baseline.name: True, vendor.name: True}
+        meta.pop("comparision_result", None)
+        save_metadata(self.test_dir, meta)
+
+        # Mock compare() so we can assert is_partial=True is passed, and avoid heavy logic.
+        result_df = pd.DataFrame({
+            "Code": ["1001"],
+            "Dst Code Name": [None],
+            "Old Rate": [0.05],
+            "New Rate": [0.05],
+            "Old Billing Increment": ["1/60"],
+            "New Billing Increment": ["1/60"],
+            "Effective Date": [datetime(2026, 1, 1)],
+            "Status": ["Accepted"],
+            "Change Type": ["Unchanged"],
+            "Notes": [""],
+        })
+        stats = {"total_rows": 1}
+
+        with patch("multithreading.fetch_vendor_context_by_sender_email", return_value={"vendor_id": 1, "vendor_date_format": None, "is_partial": True}), \
+             patch("multithreading.compare", return_value=(result_df, stats)) as mock_compare, \
+             patch("multithreading.insert_rate_upload", return_value=1), \
+             patch("multithreading.bulk_insert_rate_upload_details", return_value=1), \
+             patch("multithreading.mark_processing_stage"):
+            msg = process_one_folder(self.test_dir)
+
+        self.assertTrue(mock_compare.called)
+        self.assertEqual(mock_compare.call_args.kwargs.get("is_partial"), True)
+
     def test_two_waiting_sheets_advance_one_per_next_run(self):
         """
         Scenario:
@@ -375,7 +425,8 @@ class TestMultithreading(unittest.TestCase):
 
         from unittest.mock import patch
 
-        with patch("multithreading.insert_rate_upload", return_value=123) as mock_insert, \
+        with patch("builtins.print"), \
+             patch("multithreading.insert_rate_upload", return_value=123) as mock_insert, \
              patch("multithreading.bulk_insert_rate_upload_details", return_value=1) as mock_bulk, \
              patch("multithreading.mark_processing_stage") as mock_stage:
 
