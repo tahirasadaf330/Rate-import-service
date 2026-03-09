@@ -459,20 +459,20 @@ class TestMultithreading(unittest.TestCase):
         # Should print no folders to process
         run_pipeline_mt(str(self.test_dir), max_workers=2)
 
-    def test_prefix_derived_from_force_table_used_for_pending_gate(self):
-        # When metadata.prefix is missing, process_one_folder should derive it from
-        # force_jerasoft_table_name (before subject) and pass it into the pending gate.
+    def test_trunk_derived_from_force_table_when_subject_invalid_used_for_pending_gate(self):
+        # If subject is invalid, process_one_folder should derive trunk from
+        # force_jerasoft_table_name and pass it into the pending gate.
         meta = load_metadata(self.test_dir) or {}
         meta["sender"] = "same@vendor.com"
         meta["date_verification_ingestion_status"] = True
-        meta["prefix"] = None
-        meta["force_jerasoft_table_name"] = "TERM-RATE IMPORT AUTOMATION TESTING PREFIX:1234 [USD]"
+        meta["trunk"] = None
+        meta["force_jerasoft_table_name"] = "TERM-RATE IMPORT AUTOMATION TESTING PRM trunk PREFIX:1234 [USD]"
         meta["subject"] = "no prefix here"
         save_metadata(self.test_dir, meta)
 
         with patch("multithreading.vendor_has_pending_jera_upload_today", return_value=False) as mock_gate:
             process_one_folder(self.test_dir)
-        self.assertEqual(mock_gate.call_args.kwargs.get("prefix"), "1234")
+        self.assertEqual(mock_gate.call_args.kwargs.get("trunk"), "PRM")
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

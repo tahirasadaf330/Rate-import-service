@@ -67,6 +67,48 @@ def _derive_prefix(meta: Dict[str, Any]) -> Optional[str]:
 
     return None
 
+def _derive_trunk(meta: Dict[str, Any]) -> Optional[str]:
+    """
+    Derive trunk for vendor/day waiting gate.
+
+    Rules:
+      1) valid subject -> trunk from subject parser
+      2) invalid subject -> derive from force_jerasoft_table_name
+    """
+    try:
+        from email_verification import validate_subject
+    except Exception:
+        validate_subject = None  # type: ignore[assignment]
+
+    subject = str(meta.get("subject") or "").strip()
+    if subject and validate_subject:
+        try:
+            parsed = validate_subject(subject)
+        except Exception:
+            parsed = None
+        trunk = str((parsed or {}).get("trunk") or "").strip()
+        if trunk:
+            return trunk
+
+    force_table = str(meta.get("force_jerasoft_table_name") or "").strip()
+    if not force_table:
+        return None
+
+    if validate_subject:
+        try:
+            parsed = validate_subject(force_table)
+        except Exception:
+            parsed = None
+        trunk = str((parsed or {}).get("trunk") or "").strip()
+        if trunk:
+            return trunk
+
+    m = re.search(r"\b([A-Za-z][\w\-]*)\s+trunk\b", force_table, flags=re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+
+    return None
+
 def load_metadata(folder: Path) -> Optional[Dict[str, Any]]:
     meta = folder / "metadata.json"
     if not meta.exists():
@@ -472,7 +514,7 @@ def process_one_folder(folder: Path) -> str:
     # for this vendor is still pending today. Persist this as a DB-visible "waiting" status.
     try:
         sender = str(meta.get("sender") or "").strip() or None
-        prefix = _derive_prefix(meta)
+        trunk = _derive_trunk(meta)
         internet_message_id = str(
             meta.get("internet_message_id")
             or meta.get("internetMessageId")
@@ -482,7 +524,7 @@ def process_one_folder(folder: Path) -> str:
 
         if vendor_has_pending_jera_upload_today(
             sender_email=sender,
-            prefix=prefix,
+            trunk=trunk,
             exclude_internet_message_id=internet_message_id,
         ):
             try:
@@ -1261,16 +1303,16 @@ def run_pipeline_mt(attachments_base: str = "attachments", max_workers: int = 4)
         print("[PIPELINE] no folders to process.")
         return
 
-    # IMPORTANT: serialize processing per vendor+prefix (per sender email + prefix).
-    # Our business rule blocks only vendor+prefix when a pending upload exists today,
-    # so vendor A / prefix 1001 can run in parallel with vendor A / prefix 2002.
+    # IMPORTANT: serialize processing per vendor+trunk (per sender email + trunk).
+    # Our business rule blocks only vendor+trunk when a pending upload exists today,
+    # so vendor A / trunk X can run in parallel with vendor A / trunk Y.
     queues: dict[tuple[str, str], list[Path]] = {}
     for d in folders:
         meta = load_metadata(d) or {}
         sender = str(meta.get("sender") or "").strip().casefold() or "__unknown_sender__"
-        prefix = _derive_prefix(meta)
-        prefix_key = (str(prefix).strip() if prefix is not None else "") or "__unknown_prefix__"
-        key = (sender, prefix_key.casefold())
+        trunk = _derive_trunk(meta)
+        trunk_key = (str(trunk).strip() if trunk is not None else "") or "__unknown_trunk__"
+        key = (sender, trunk_key.casefold())
         queues.setdefault(key, []).append(d)
 
     for q in queues.values():

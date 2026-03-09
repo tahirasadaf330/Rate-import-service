@@ -1840,13 +1840,13 @@ WAITING_PREVIOUS_VENDOR_PENDING = "waiting: previous JeraSoft upload for this ve
 def vendor_has_pending_jera_upload_today(
     *,
     sender_email: Optional[str],
-    prefix: Optional[str] = None,
+    trunk: Optional[str] = None,
     exclude_internet_message_id: Optional[str] = None,
 ) -> bool:
     """
     Return True if there exists ANOTHER rate_uploads row for the same sender_email
     dated today (by received_at if present, else created_at) with a pending JeraSoft upload,
-    AND the pending row has the SAME prefix as the current sheet.
+    AND the pending row has the SAME trunk as the current sheet.
 
     Pending statuses (per spec): 'pending' or 'pending_bulk'
 
@@ -1858,9 +1858,9 @@ def vendor_has_pending_jera_upload_today(
     if not email:
         return False
 
-    # Only gate when the current sheet has a usable prefix.
-    pref = (str(prefix).strip() if prefix is not None else "") or None
-    if not pref:
+    # Only gate when the current sheet has a usable trunk.
+    want_trunk = (str(trunk).strip() if trunk is not None else "") or None
+    if not want_trunk:
         return False
 
     # Exclude current item by internet_message_id (best key across retries).
@@ -1884,36 +1884,35 @@ def vendor_has_pending_jera_upload_today(
         if not rows:
             return False
 
-    # Compare prefixes by parsing the stored subject (same logic used when building metadata.json).
+    # Compare trunks by parsing the stored subject.
     try:
         from email_verification import validate_subject  # local import to avoid circular deps at import time
     except Exception:
         # If we can't parse, be conservative and don't block processing.
         return False
 
-    want = pref.upper() if pref.upper() == "NONE" else pref
+    want = want_trunk.casefold()
     for (subj,) in rows:
         parsed = None
         try:
             parsed = validate_subject(subj)
         except Exception:
             parsed = None
-        got = (parsed or {}).get("prefix")
+        got = (parsed or {}).get("trunk")
         got_s = str(got).strip() if got is not None else ""
         if not got_s:
-            # Fallback for subjects like ".... PREFIX:1234 [USD]" which don't match validate_subject().
+            # Fallback for freeform strings like "... PRM trunk PREFIX:1001 USD".
             try:
                 import re as _re
                 s = str(subj or "")
-                m = _re.search(r"\bprefix\b\s*[:\s-]*\s*(none|\d+)", s, flags=_re.IGNORECASE)
+                m = _re.search(r"\b([A-Za-z][\w\-]*)\s+trunk\b", s, flags=_re.IGNORECASE)
                 if m:
-                    got_s = "NONE" if m.group(1).strip().lower() == "none" else m.group(1).strip()
+                    got_s = m.group(1).strip()
             except Exception:
                 got_s = ""
         if not got_s:
             continue
-        got_norm = got_s.upper() if got_s.upper() == "NONE" else got_s
-        if got_norm == want:
+        if got_s.casefold() == want:
             return True
 
     return False
