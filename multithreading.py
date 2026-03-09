@@ -103,6 +103,36 @@ def _derive_trunk(meta: Dict[str, Any]) -> Optional[str]:
         if trunk:
             return trunk
 
+    # Keyword fallback for invalid subjects/table names used by operations.
+    # Pick the first keyword by position in the force-table string.
+    keyword_patterns = [
+        ("CC", r"\bcall\s+center\b"),
+        ("CC", r"\bcc\b"),
+        ("STD", r"\bstandard\b"),
+        ("STD", r"\bgold\b"),
+        ("STD", r"\bwholesale\b"),
+        ("STD", r"\bstd\b"),
+        ("PRM", r"\bprm\b"),
+        ("PRM", r"\bprs\b"),
+        ("PRM", r"\bpremium\b"),
+        ("PRM", r"\bsilver\b"),
+        ("ORTP", r"\bortp\b"),
+        ("TDM", r"\btdm\b"),
+        ("DID", r"\bdid\b"),
+        ("SPECIAL", r"\bspecial\b"),
+        ("ATX", r"\batx\b"),
+    ]
+    best: Optional[tuple[int, str]] = None
+    for label, pat in keyword_patterns:
+        m = re.search(pat, force_table, flags=re.IGNORECASE)
+        if not m:
+            continue
+        pos = m.start()
+        if best is None or pos < best[0]:
+            best = (pos, label)
+    if best:
+        return best[1]
+
     m = re.search(r"\b([A-Za-z][\w\-]*)\s+trunk\b", force_table, flags=re.IGNORECASE)
     if m:
         return m.group(1).strip()

@@ -26,6 +26,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
+import multithreading as mt
 from multithreading import (
     load_metadata, save_metadata, cleaned_out_path, find_jerasoft_file, vendor_files,
     as_of_from_metadata, read_comparison_table, df_to_detail_dicts, compute_upload_stats,
@@ -466,13 +467,69 @@ class TestMultithreading(unittest.TestCase):
         meta["sender"] = "same@vendor.com"
         meta["date_verification_ingestion_status"] = True
         meta["trunk"] = None
-        meta["force_jerasoft_table_name"] = "TERM-RATE IMPORT AUTOMATION TESTING PRM trunk PREFIX:1234 [USD]"
+        meta["force_jerasoft_table_name"] = "TERM MMD-PRM-CC INC PREFIX:10013"
         meta["subject"] = "no prefix here"
         save_metadata(self.test_dir, meta)
 
         with patch("multithreading.vendor_has_pending_jera_upload_today", return_value=False) as mock_gate:
             process_one_folder(self.test_dir)
         self.assertEqual(mock_gate.call_args.kwargs.get("trunk"), "PRM")
+
+    def test_derive_trunk_prefers_valid_subject_before_force_table(self):
+        meta = {
+            "subject": "valid subject",
+            "force_jerasoft_table_name": "TERM GOLD PREFIX:10013",
+        }
+
+        def _fake_validate_subject(value):
+            if value == "valid subject":
+                return {"trunk": "STD"}
+            return {"trunk": "GOLD"}
+
+        with patch("email_verification.validate_subject", side_effect=_fake_validate_subject):
+            trunk = mt._derive_trunk(meta)
+
+        self.assertEqual(trunk, "STD")
+
+    def test_derive_trunk_from_force_table_keyword_cases(self):
+        cases = [
+            ("TERM STANDARD PREFIX:10013", "STD"),
+            ("TERM GOLD PREFIX:10013", "STD"),
+            ("TERM SILVER PREFIX:10013", "PRM"),
+            ("TERM ORTP PREFIX:10013", "ORTP"),
+            ("TERM CC PREFIX:10013", "CC"),
+            ("TERM WHOLESALE PREFIX:10013", "STD"),
+            ("TERM PRM PREFIX:10013", "PRM"),
+            ("TERM STD PREFIX:10013", "STD"),
+            ("TERM PRS PREFIX:10013", "PRM"),
+            ("TERM TDM PREFIX:10013", "TDM"),
+            ("TERM DID PREFIX:10013", "DID"),
+            ("TERM SPECIAL PREFIX:10013", "SPECIAL"),
+            ("TERM ATX PREFIX:10013", "ATX"),
+            ("TERM PREMIUM PREFIX:10013", "PRM"),
+            ("TERM CALL CENTER PREFIX:10013", "CC"),
+        ]
+
+        with patch("email_verification.validate_subject", return_value=None):
+            for force_table, expected in cases:
+                with self.subTest(force_table=force_table, expected=expected):
+                    trunk = mt._derive_trunk(
+                        {
+                            "subject": "invalid subject",
+                            "force_jerasoft_table_name": force_table,
+                        }
+                    )
+                    self.assertEqual(trunk, expected)
+
+    def test_derive_trunk_returns_none_when_no_subject_and_no_force_keyword(self):
+        with patch("email_verification.validate_subject", return_value=None):
+            trunk = mt._derive_trunk(
+                {
+                    "subject": "invalid subject",
+                    "force_jerasoft_table_name": "TERM MMD-XYZ INC PREFIX:10013",
+                }
+            )
+        self.assertIsNone(trunk)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
