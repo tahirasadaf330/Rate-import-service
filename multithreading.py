@@ -1239,6 +1239,7 @@ def process_one_folder(folder: Path) -> str:
         processing_status_id = int(ps["id"]) if ps and ps.get("id") is not None else None
     except Exception:
         processing_status_id = None
+    trunk_for_db = _derive_trunk(meta)
 
     upload_id = meta.get("rate_upload_id")
     if not upload_id:
@@ -1254,6 +1255,7 @@ def process_one_folder(folder: Path) -> str:
                 comparison_file_path=comparison_file_path,
                 internet_message_id=internet_message_id,
                 processing_status_id=processing_status_id,
+                trunk=trunk_for_db,
             )
             meta["rate_upload_id"] = int(upload_id)
             save_metadata(folder, meta)

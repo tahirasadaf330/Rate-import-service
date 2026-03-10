@@ -27,11 +27,15 @@ class TestDatabaseModule(unittest.TestCase):
         mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
         # Found a pending row
-        mock_cursor.fetchall.return_value = [("foo PRM trunk PREFIX:1001 [USD]",)]
+        mock_cursor.fetchall.return_value = [("PRM",)]
         self.assertTrue(database.vendor_has_pending_jera_upload_today(sender_email="a@b.com", trunk="PRM", exclude_internet_message_id="mid-1"))
 
         # Not found
         mock_cursor.fetchall.return_value = []
+        self.assertFalse(database.vendor_has_pending_jera_upload_today(sender_email="a@b.com", trunk="PRM"))
+
+        # Null DB trunk should not fallback to subject parsing.
+        mock_cursor.fetchall.return_value = [(None,)]
         self.assertFalse(database.vendor_has_pending_jera_upload_today(sender_email="a@b.com", trunk="PRM"))
 
         # Empty sender should be False (and not query DB)

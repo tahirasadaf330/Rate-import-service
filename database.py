@@ -416,6 +416,7 @@ def insert_rate_upload(
     comparison_file_path: Optional[str] = None,
     internet_message_id: Optional[str] = None,
     processing_status_id: Optional[int] = None,
+    trunk: Optional[str] = None,
 ) -> int:
     """
     Insert one row into rate_uploads with summary counters.
@@ -443,13 +444,13 @@ def insert_rate_upload(
 
     sql = """
         INSERT INTO rate_uploads
-        (subject, sender_email, received_at, processed_at, internet_message_id, processing_status_id,
+        (subject, sender_email, received_at, processed_at, internet_message_id, processing_status_id, trunk,
          total_rows, "new", increase, decrease, unchanged, closed, stashed,
          backdated_increase, backdated_decrease, billing_increment_changes,
          rates_gte_one_usd_count,
          jera_table_id, comparison_file_path, created_at, updated_at)
         VALUES
-        (%s, %s, COALESCE(%s, NOW()), %s, %s, %s,
+        (%s, %s, COALESCE(%s, NOW()), %s, %s, %s, %s,
          %s, %s, %s, %s, %s, %s, %s,
          %s, %s, %s, %s, %s, %s,
          NOW(), NOW())
@@ -466,6 +467,7 @@ def insert_rate_upload(
                 processed_at,
                 internet_message_id,
                 processing_status_id,
+                trunk,
                 t["total_rows"],
                 t["new"],
                 t["increase"],
@@ -1867,7 +1869,7 @@ def vendor_has_pending_jera_upload_today(
     exclude_mid = (exclude_internet_message_id or "").strip() or None
 
     sql = """
-        SELECT ru.subject
+        SELECT ru.trunk
           FROM rate_uploads ru
          WHERE LOWER(COALESCE(ru.sender_email, '')) = LOWER(%s)
            AND COALESCE(ru.received_at, ru.created_at)::date = CURRENT_DATE
@@ -1884,32 +1886,9 @@ def vendor_has_pending_jera_upload_today(
         if not rows:
             return False
 
-    # Compare trunks by parsing the stored subject.
-    try:
-        from email_verification import validate_subject  # local import to avoid circular deps at import time
-    except Exception:
-        # If we can't parse, be conservative and don't block processing.
-        return False
-
     want = want_trunk.casefold()
-    for (subj,) in rows:
-        parsed = None
-        try:
-            parsed = validate_subject(subj)
-        except Exception:
-            parsed = None
-        got = (parsed or {}).get("trunk")
-        got_s = str(got).strip() if got is not None else ""
-        if not got_s:
-            # Fallback for freeform strings like "... PRM trunk PREFIX:1001 USD".
-            try:
-                import re as _re
-                s = str(subj or "")
-                m = _re.search(r"\b([A-Za-z][\w\-]*)\s+trunk\b", s, flags=_re.IGNORECASE)
-                if m:
-                    got_s = m.group(1).strip()
-            except Exception:
-                got_s = ""
+    for (got_trunk,) in rows:
+        got_s = str(got_trunk or "").strip()
         if not got_s:
             continue
         if got_s.casefold() == want:
