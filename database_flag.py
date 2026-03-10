@@ -1,7 +1,7 @@
 from typing import Iterable, Tuple, Optional, Dict, Any, List, Mapping
 from pathlib import Path
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from database import mark_ingest_processed, upsert_processing_status, get_processing_status, get_conn
 from date_verification import _parse_iso_utc_dt
 
@@ -76,16 +76,17 @@ def _folder_is_today_or_newer(meta: dict) -> bool:
     Falls back to date_utc if receivedDateTime_raw is missing.
     If both are missing/unparseable, we allow (return True).
     """
+    cutoff_date = date.today() - timedelta(days=1)
     raw = (meta.get("receivedDateTime_raw") or "").strip()
     if raw:
         try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00")).date() >= date.today()
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).date() >= cutoff_date
         except Exception:
             pass
     ds = (meta.get("date_utc") or "").strip()
     if len(ds) == 10:
         try:
-            return datetime.fromisoformat(ds).date() >= date.today()
+            return datetime.fromisoformat(ds).date() >= cutoff_date
         except Exception:
             pass
     # If we can't tell, allow it (so we don't accidentally skip new data)
