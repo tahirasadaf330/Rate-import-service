@@ -41,6 +41,31 @@ def _parse_iso_utc(s: Optional[str]) -> Optional[datetime]:
     except Exception:
         return None
 
+
+def _short_failed_status(error_message: Optional[str], max_len: int = 255) -> str:
+    """
+    Build a short failure status string that always fits the DB status column.
+    Full error details should live in metadata / rejected_emails notes.
+    """
+    prefix = "failed"
+    if not error_message:
+        return prefix
+
+    msg = str(error_message).strip()
+    if not msg:
+        return prefix
+
+    status_text = f"{prefix}: {msg}"
+    if len(status_text) <= max_len:
+        return status_text
+
+    ellipsis = "..."
+    available = max_len - len(prefix) - 2 - len(ellipsis)
+    if available <= 0:
+        return prefix[:max_len]
+
+    return f"{prefix}: {msg[:available].rstrip()}{ellipsis}"
+
 def insert_rejected_email(
     sender_email: Optional[str],
     subject: Optional[str],
@@ -1232,16 +1257,9 @@ def mark_processing_stage(
 
     # ---- Immediate failure (no gating) ----
     if final_status is False:
-        # Build a human-readable status text but always keep a 'failed' prefix
-        # so reprocessing queries can still match with status LIKE 'failed%'.
-        status_text = "failed"
-        if error_message:
-            msg = str(error_message).strip()
-            if msg:
-                # Avoid unbounded row size; keep the most important part.
-                if len(msg) > 900:
-                    msg = msg[:900] + "...(truncated)"
-                status_text = f"failed: {msg}"
+        # Keep processing_statuses.status short enough for the DB column,
+        # while full details remain available in metadata / rejected_emails.
+        status_text = _short_failed_status(error_message)
 
         set_bits += [f"{col} = FALSE", "status = %s"]
         sql = f"UPDATE processing_statuses SET {', '.join(set_bits)} WHERE {where_key_sql}"
