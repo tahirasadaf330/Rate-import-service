@@ -7,6 +7,20 @@ from database import _parse_iso_utc
 from pathlib import Path
 
 class TestDatabaseModule(unittest.TestCase):
+    def test_short_failed_status_cases(self):
+        self.assertEqual(database._short_failed_status(None), "failed")
+        self.assertEqual(database._short_failed_status("   "), "failed")
+        self.assertEqual(
+            database._short_failed_status("some reason"),
+            "failed: some reason",
+        )
+
+        long_msg = "x" * 400
+        status_text = database._short_failed_status(long_msg)
+        self.assertTrue(status_text.startswith("failed: "))
+        self.assertTrue(status_text.endswith("..."))
+        self.assertLessEqual(len(status_text), 255)
+
     @patch('database.get_conn')
     def test_get_pending_jera_uploads(self, mock_get_conn):
         mock_conn = MagicMock()
@@ -453,7 +467,7 @@ class TestDatabaseModule(unittest.TestCase):
     @patch('database.upsert_rejected_email_from_processing_failure')
     @patch('database.get_conn')
     def test_mark_processing_stage_cases(self, mock_get_conn, mock_upsert):
-        from database import mark_processing_stage
+        from database import mark_processing_stage, _short_failed_status
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_get_conn.return_value.__enter__.return_value = mock_conn
@@ -471,6 +485,17 @@ class TestDatabaseModule(unittest.TestCase):
         mark_processing_stage(directory_name='dir', stage='rate_uploaded', final_status=False)
         mark_processing_stage(directory_name='dir', stage='rate_uploaded', final_status=False, error_message='some reason')
         self.assertTrue(mock_upsert.called)
+
+        long_error = 'Ambiguous columns for Dst Code: ' + ('x' * 400)
+        expected_status = _short_failed_status(long_error)
+        mark_processing_stage(directory_name='dir', stage='rate_uploaded', final_status=False, error_message=long_error)
+
+        update_calls = [call for call in mock_cursor.execute.call_args_list if 'UPDATE processing_statuses SET' in call.args[0]]
+        self.assertTrue(update_calls)
+        self.assertEqual(update_calls[-1].args[1][0], expected_status)
+        self.assertLessEqual(len(update_calls[-1].args[1][0]), 255)
+
+        self.assertEqual(mock_upsert.call_args.kwargs.get('status_text'), expected_status)
 
         # Missing directory_name and internet_message_id
         with self.assertRaises(ValueError):
