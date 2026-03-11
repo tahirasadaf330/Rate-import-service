@@ -23,7 +23,7 @@ from database import (
     backfill_ingest_files_jera_table_from_metadata,
     ensure_internet_message_id_links,
 )
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from date_verification import  ingest_files_for_manual_date, mark_date_verification_ingestion
 from database_flag import seed_processing_status_rows, finalize_processed_flags
 from reprocessing import ReprocessingManager
@@ -33,8 +33,8 @@ FAILED_EMAILS_PATH = Path(__file__).with_name("failed_emails.json")
 #_____________ Email Verification Script_____________
 
 # after = "2025-09-29"              # only include emails on/after this date (YYYY-MM-DD) or None     "2025-08-29"
-after = datetime.now().strftime("%Y-%m-%d")
-before = None       # only include emails on/before this date (YYYY-MM-DD) or None
+after = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+before = datetime.now().strftime("%Y-%m-%d")       # only include emails on/before this date (YYYY-MM-DD) or None
 unread_only = False    
 ATTEMPTS = 2
 #____________________________________#
