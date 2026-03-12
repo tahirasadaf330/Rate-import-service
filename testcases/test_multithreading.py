@@ -363,7 +363,7 @@ class TestMultithreading(unittest.TestCase):
 
         seen = {}
 
-        def _fake_clean(in_path, out_path, sheet, date_format_email=None):
+        def _fake_clean(in_path, out_path, sheet, date_format_email=None, vendor_header_mapping=None):
             seen["date_format_email"] = date_format_email
             return pd.DataFrame({"x": [1]})
 
@@ -375,6 +375,51 @@ class TestMultithreading(unittest.TestCase):
         # it should attempt DB push and then skip because comparision_result is not ok
         self.assertIn("skip DB push", msg)
         self.assertEqual(seen.get("date_format_email"), "MM-DD-YYYY")
+
+    def test_cleaning_uses_active_vendor_header_mapping_when_vendor_is_mapped(self):
+        meta = load_metadata(self.test_dir)
+        meta["date_verification_ingestion_status"] = True
+        meta["date_format_identified"] = "YYYY-MM-DD"
+        meta["jerasoft_preprocessed"] = True
+        meta["comparision_result"] = {"result": "skip for test"}
+        meta["preprocessed_results"] = {}
+        save_metadata(self.test_dir, meta)
+
+        vendor = self.test_dir / "vendor.xlsx"
+        vendor.write_bytes(b"test")
+
+        seen = {}
+        mapping = {
+            "source_sheet": "Rates",
+            "header_row_index": 8,
+            "field_mappings": [
+                {"canonical_field": "dst_code", "source_header": "IBIS codes"},
+                {"canonical_field": "rate", "source_header": "TDE"},
+                {"canonical_field": "effective_date", "source_header": "Start Date"},
+                {"canonical_field": "billing_increment", "source_header": "Price Status"},
+            ],
+        }
+
+        def _fake_clean(in_path, out_path, sheet, date_format_email=None, vendor_header_mapping=None):
+            seen["date_format_email"] = date_format_email
+            seen["vendor_header_mapping"] = vendor_header_mapping
+            return pd.DataFrame({
+                "Dst Code": ["43"],
+                "Rate": [0.56],
+                "Effective Date": ["2026-01-21"],
+                "Billing Increment": ["1/1"],
+            })
+
+        with patch("multithreading.fetch_vendor_context_by_sender_email", return_value={"vendor_id": 7, "vendor_date_format": "MM-DD-YYYY", "is_partial": False, "is_mapped": True}), \
+             patch("multithreading.fetch_active_vendor_header_mapping", return_value=mapping) as mock_fetch_mapping, \
+             patch("multithreading.load_clean_rates", side_effect=_fake_clean), \
+             patch("multithreading.mark_processing_stage", return_value=None):
+            msg = process_one_folder(self.test_dir)
+
+        self.assertIn("skip DB push", msg)
+        self.assertEqual(seen.get("date_format_email"), "MM-DD-YYYY")
+        self.assertEqual(seen.get("vendor_header_mapping"), mapping)
+        mock_fetch_mapping.assert_called_once_with(7)
 
     def test_compare_skipped_when_preprocessing_failed(self):
         # If preprocessing failed (final_ok=False), comparison should not run.
