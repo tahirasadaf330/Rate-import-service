@@ -3,6 +3,7 @@ from datetime import datetime
 from dateutil import parser as dparse
 from openpyxl import load_workbook
 import re, unicodedata
+from typing import Any, Dict, Optional
 
 REQUIRED_COLS = [
     'Dst Code', 'Rate', 'Effective Date', 'Billing Increment'
@@ -408,7 +409,7 @@ def _raw_from_excel_pandas(path: str, sheet) -> pd.DataFrame:
 
 # ── PATCH 2: strengthen _read_raw_matrix to try pandas when there are 0 worksheets
 #             and as a final fallback when header detection fails on all sheets. ──
-def _read_raw_matrix(path: str, sheet=0) -> pd.DataFrame:
+def _read_raw_matrix(path: str, sheet=0, strict_sheet: bool = False) -> pd.DataFrame:
     ext = os.path.splitext(path)[1].lower()
     if ext in ('.xlsx', '.xlsm', '.xls'):
         # Optional: route legacy .xls straight to pandas, since openpyxl can't read BIFF .xls
@@ -436,6 +437,58 @@ def _read_raw_matrix(path: str, sheet=0) -> pd.DataFrame:
             except Exception as e:
                 wb.close()
                 raise ValueError(f"No worksheets found and pandas fallback failed: {e}")
+
+        if strict_sheet:
+            target_idx = None
+            if isinstance(sheet, int):
+                if 0 <= sheet < len(wb.worksheets):
+                    target_idx = sheet
+                else:
+                    wb.close()
+                    raise ValueError(f"Sheet index out of range: {sheet}")
+            elif isinstance(sheet, str):
+                for i, ws in enumerate(wb.worksheets):
+                    if ws.title == sheet:
+                        target_idx = i
+                        break
+                if target_idx is None:
+                    wb.close()
+                    raise ValueError(f"Sheet not found: {sheet}")
+            else:
+                target_idx = 0
+
+            ws = wb.worksheets[target_idx]
+            rows_as_text = []
+            for row in ws.iter_rows(
+                min_row=1,
+                max_row=ws.max_row,
+                min_col=1,
+                max_col=ws.max_column,
+                values_only=False,
+            ):
+                rows_as_text.append([
+                    "" if cell.value is None else str(cell.value)
+                    for cell in row
+                ])
+
+            raw_stream = pd.DataFrame(rows_as_text)
+            if not raw_stream.empty:
+                keep_cols = [
+                    col for col in raw_stream.columns
+                    if raw_stream[col].astype(str).str.strip().ne("").any()
+                ]
+                raw_stream = raw_stream[keep_cols] if keep_cols else raw_stream.iloc[:, :0]
+            raw_stream = raw_stream.astype("string")
+            chosen = raw_stream
+            if raw_stream.shape[0] < ROW_FALLBACK_THRESHOLD:
+                try:
+                    raw_pd = _raw_from_excel_pandas(path, target_idx)
+                    if raw_pd.shape[0] > raw_stream.shape[0]:
+                        chosen = raw_pd
+                except Exception:
+                    pass
+            wb.close()
+            return chosen
 
         # try requested sheet first, then all others
         try_order = []
@@ -957,6 +1010,144 @@ def _canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _canonical_name_from_mapping_field(field_name: object) -> Optional[str]:
+    key = _strip_currency_words_from_key(_norm(_preclean_header_token(field_name or "")))
+    if not key:
+        return None
+    if key in ALIAS_MAP:
+        return ALIAS_MAP[key]
+    explicit = {
+        "dst_code_name": "Dst Code Name",
+        "current_rate_usd": "CURRENT RATE USD",
+    }
+    return explicit.get(key)
+
+
+def _apply_vendor_header_mapping(df: pd.DataFrame, field_mappings: list[dict[str, Any]]) -> pd.DataFrame:
+    normalized_headers: Dict[str, list[str]] = {}
+    for col in df.columns:
+        key = _strip_currency_words_from_key(_norm(_preclean_header_token(col)))
+        normalized_headers.setdefault(key, []).append(col)
+
+    rename_map: Dict[str, str] = {}
+    target_sources: Dict[str, str] = {}
+
+    for row in field_mappings:
+        source_header = row.get("source_header")
+        canonical_name = _canonical_name_from_mapping_field(row.get("canonical_field"))
+        if not source_header or not canonical_name:
+            continue
+
+        source_key = _strip_currency_words_from_key(_norm(_preclean_header_token(source_header)))
+        candidates = normalized_headers.get(source_key, [])
+        if not candidates:
+            raise ValueError(f"Mapped source header not found in sheet: {source_header}")
+        if len(candidates) > 1:
+            raise ValueError(f"Mapped source header is ambiguous in sheet: {source_header}")
+
+        source_col = candidates[0]
+        existing_source = target_sources.get(canonical_name)
+        if existing_source and existing_source != source_col:
+            raise ValueError(f"Multiple source headers map to canonical field: {canonical_name}")
+
+        rename_map[source_col] = canonical_name
+        target_sources[canonical_name] = source_col
+
+    df = df.rename(columns=rename_map)
+
+    missing = [col for col in REQUIRED_COLS if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required canonical columns from vendor header mapping: {missing}")
+
+    return df
+
+
+def _mapped_source_keys(field_mappings: list[dict[str, Any]]) -> list[str]:
+    keys: list[str] = []
+    seen = set()
+    for row in field_mappings:
+        source_header = row.get("source_header")
+        canonical_name = _canonical_name_from_mapping_field(row.get("canonical_field"))
+        if not source_header or not canonical_name:
+            continue
+        key = _strip_currency_words_from_key(_norm(_preclean_header_token(source_header)))
+        if key and key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return keys
+
+
+def _detect_header_row_from_vendor_mapping(raw: pd.DataFrame, field_mappings: list[dict[str, Any]]) -> int:
+    target_keys = _mapped_source_keys(field_mappings)
+    if not target_keys:
+        raise ValueError("Vendor header mapping has no usable source headers")
+
+    best_count = -1
+    best_row = -1
+    best_hits: list[str] = []
+
+    for idx, row in raw.iterrows():
+        cells = [x for x in row if pd.notna(x)]
+        if not cells:
+            continue
+
+        row_keys = {
+            _strip_currency_words_from_key(_norm(_preclean_header_token(cell)))
+            for cell in cells
+        }
+        hits = [key for key in target_keys if key in row_keys]
+        if len(hits) == len(target_keys):
+            return idx
+        if len(hits) > best_count:
+            best_count = len(hits)
+            best_row = idx
+            best_hits = hits
+
+    raise ValueError(
+        f"Mapped source headers not found together on any row. "
+        f"Best row={best_row}, matched={best_hits}, expected={target_keys}"
+    )
+
+
+def _read_raw_matrix_for_vendor_mapping(path: str, field_mappings: list[dict[str, Any]], sheet=0) -> tuple[pd.DataFrame, int]:
+    ext = os.path.splitext(path)[1].lower()
+    if ext in ('.xlsx', '.xlsm', '.xls'):
+        sheet_names: list[Any] = []
+        if ext in ('.xlsx', '.xlsm'):
+            wb = load_workbook(path, data_only=True, read_only=True)
+            sheet_names = [ws.title for ws in wb.worksheets]
+            wb.close()
+        else:
+            for eng in ("calamine", "openpyxl"):
+                try:
+                    xl = pd.ExcelFile(path, engine=eng)
+                    sheet_names = list(xl.sheet_names)
+                    break
+                except Exception:
+                    continue
+
+        if not sheet_names:
+            sheet_names = [sheet if sheet is not None else 0]
+
+        last_error = None
+        for sheet_name in sheet_names:
+            try:
+                raw = _raw_from_excel_pandas(path, sheet_name)
+                header_row_idx = _detect_header_row_from_vendor_mapping(raw, field_mappings)
+                return raw, header_row_idx
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        if last_error:
+            raise ValueError(str(last_error))
+        raise ValueError("Mapped source headers not found on any sheet")
+
+    raw = _read_raw_matrix(path, sheet=sheet)
+    header_row_idx = _detect_header_row_from_vendor_mapping(raw, field_mappings)
+    return raw, header_row_idx
+
+
 # ──────────────────────────────── footer ─────────────────────────────────
 
 # Customize the keywords if you want to add more
@@ -1376,7 +1567,13 @@ def _normalize_excel_writer_path(path: str) -> tuple[str, dict]:
     print(f"[writer] forcing .xlsx for unknown ext {ext or '(none)'}")
     return new_path, {'engine': 'openpyxl'}
 
-def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email: str | None = None) -> pd.DataFrame:
+def load_clean_rates(
+    path: str,
+    output_path: str,
+    sheet=None,
+    date_format_email: str | None = None,
+    vendor_header_mapping: Optional[Dict[str, Any]] = None,
+) -> pd.DataFrame:
     """
     Robust loader:
       1) Read raw grid (openpyxl for Excel; pandas for CSV/TXT)
@@ -1388,15 +1585,23 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     if not os.path.exists(path):
         raise FileNotFoundError(f'File not found: {path}')
 
-    # 1) raw grid
-    raw = _read_raw_matrix(path, sheet=sheet)
+    if vendor_header_mapping:
+        raw, header_row_idx = _read_raw_matrix_for_vendor_mapping(
+            path,
+            vendor_header_mapping.get("field_mappings") or [],
+            sheet=sheet,
+        )
+    else:
+        # 1) raw grid
+        raw = _read_raw_matrix(path, sheet=sheet)
 
     print(f"\n\n\nInitial raw data read from file:\n{raw}\n\n\n")
     # return raw
 
-    print('\n\nDEBUG: Calling the detect header row function from load_clean_rates\n\n')
-    # 2) detect header row in the raw grid
-    header_row_idx = detect_header_row(raw)
+    if not vendor_header_mapping:
+        print('\n\nDEBUG: Calling the detect header row function from load_clean_rates\n\n')
+        # 2) detect header row in the raw grid
+        header_row_idx = detect_header_row(raw)
 
     # 3) construct DF: header = that row; data = rows below it
     header_values = list(raw.iloc[header_row_idx].fillna('').astype(str))
@@ -1410,7 +1615,10 @@ def load_clean_rates(path: str, output_path: str, sheet=None, date_format_email:
     df.reset_index(drop=True, inplace=True)
 
     # 4) canonicalize & trim
-    df = _canonicalize_headers(df)
+    if vendor_header_mapping:
+        df = _apply_vendor_header_mapping(df, vendor_header_mapping.get("field_mappings") or [])
+    else:
+        df = _canonicalize_headers(df)
     df = _synthesize_billing_increment(df)
     df = trim_after_notes_and_strip_blank_above(df)
 

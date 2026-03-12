@@ -1004,10 +1004,10 @@ class TestRealFileProcessing(unittest.TestCase):
         out_path = os.path.join(self.temp_dir, "with_missing_required_cleaned.xlsx")
 
         df = pd.DataFrame({
-            "Dst Code": ["43", "", "44", "45", "46"],
-            "Rate": ["0.56", "0.10", "", "0.20", "0.30"],
-            "Effective Date": ["2026-01-21", "2026-01-21", "2026-01-21", "", "2026-01-21"],
-            "Billing Increment": ["1/1", "1/1", "1/1", "1/1", ""],
+            "Dst Code": ["43", "44", "45", "46", "", "47", "48"],
+            "Rate": ["0.56", "0.57", "0.58", "0.59", "0.10", "", "0.61"],
+            "Effective Date": ["2026-01-21", "2026-01-21", "2026-01-21", "2026-01-21", "2026-01-21", "2026-01-21", ""],
+            "Billing Increment": ["1/1", "1/1", "1/1", "1/1", "1/1", "1/1", "1/1"],
         })
         df.to_excel(src_path, index=False)
 
@@ -1018,7 +1018,7 @@ class TestRealFileProcessing(unittest.TestCase):
             date_format_email="AUTO",
         )
 
-        self.assertEqual(len(cleaned_df), 1)
+        self.assertEqual(len(cleaned_df), 4)
         self.assertEqual(cleaned_df["Dst Code"].iloc[0], "43")
         self.assertEqual(cleaned_df["Effective Date"].iloc[0], "2026-01-21")
         self.assertEqual(cleaned_df["Billing Increment"].iloc[0], "1/1")
@@ -1032,11 +1032,11 @@ class TestRealFileProcessing(unittest.TestCase):
         out_path = os.path.join(self.temp_dir, "with_dst_code_name_cleaned.xlsx")
 
         df = pd.DataFrame({
-            "Dst Code": ["92"],
-            "Dst Code Name": ["NIGERIA"],
-            "Rate": ["0.45"],
-            "Effective Date": ["2026-01-21"],
-            "Billing Increment": ["1/1"],
+            "Dst Code": ["92", "93", "94", "95"],
+            "Dst Code Name": ["NIGERIA", "GHANA", "KENYA", "UGANDA"],
+            "Rate": ["0.45", "0.46", "0.47", "0.48"],
+            "Effective Date": ["2026-01-21", "2026-01-21", "2026-01-21", "2026-01-21"],
+            "Billing Increment": ["1/1", "1/1", "1/1", "1/1"],
         })
         df.to_excel(src_path, index=False)
 
@@ -1058,11 +1058,11 @@ class TestRealFileProcessing(unittest.TestCase):
         out_path = os.path.join(self.temp_dir, "with_destination_cleaned.xlsx")
 
         df = pd.DataFrame({
-            "Dst Code": ["43"],
-            "Destination": ["SPAIN"],
-            "Rate": ["0.56"],
-            "Effective Date": ["2026-01-21"],
-            "Billing Increment": ["1/1"],
+            "Dst Code": ["43", "44", "45", "46"],
+            "Destination": ["SPAIN", "FRANCE", "ITALY", "GERMANY"],
+            "Rate": ["0.56", "0.57", "0.58", "0.59"],
+            "Effective Date": ["2026-01-21", "2026-01-21", "2026-01-21", "2026-01-21"],
+            "Billing Increment": ["1/1", "1/1", "1/1", "1/1"],
         })
         df.to_excel(src_path, index=False)
 
@@ -1084,11 +1084,11 @@ class TestRealFileProcessing(unittest.TestCase):
         out_path = os.path.join(self.temp_dir, "with_destination_country_cleaned.xlsx")
 
         df = pd.DataFrame({
-            "Dst Code": ["43"],
-            "Destination/Country": ["SPAIN"],
-            "Rate": ["0.56"],
-            "Effective Date": ["2026-01-21"],
-            "Billing Increment": ["1/1"],
+            "Dst Code": ["43", "44", "45", "46"],
+            "Destination/Country": ["SPAIN", "FRANCE", "ITALY", "GERMANY"],
+            "Rate": ["0.56", "0.57", "0.58", "0.59"],
+            "Effective Date": ["2026-01-21", "2026-01-21", "2026-01-21", "2026-01-21"],
+            "Billing Increment": ["1/1", "1/1", "1/1", "1/1"],
         })
         df.to_excel(src_path, index=False)
 
@@ -1101,6 +1101,47 @@ class TestRealFileProcessing(unittest.TestCase):
 
         self.assertIn("Dst Code Name", cleaned_df.columns)
         self.assertEqual(cleaned_df["Dst Code Name"].iloc[0], "SPAIN")
+
+    def test_load_clean_rates_finds_header_row_from_vendor_source_headers(self):
+        from preprocess_data import load_clean_rates
+
+        src_path = os.path.join(self.temp_dir, "mapped_vendor.xlsx")
+        out_path = os.path.join(self.temp_dir, "mapped_vendor_cleaned.xlsx")
+
+        with pd.ExcelWriter(src_path, engine="openpyxl") as writer:
+            pd.DataFrame({"ignore": ["x"]}).to_excel(writer, sheet_name="Other", index=False)
+            mapped_df = pd.DataFrame({
+                "IBIS codes": ["43", "44", "45", "46"],
+                "Calendar": ["SPAIN", "FRANCE", "ITALY", "GERMANY"],
+                "TDE": ["0.56", "0.57", "0.58", "0.59"],
+                "Start Date": ["2026-01-21", "2026-01-21", "2026-01-21", "2026-01-21"],
+                "Price Status": ["1/1", "1/1", "1/1", "1/1"],
+            })
+            mapped_df.to_excel(writer, sheet_name="Rates", index=False, startrow=7)
+
+        cleaned_df = load_clean_rates(
+            path=src_path,
+            output_path=out_path,
+            sheet=0,
+            date_format_email="AUTO",
+            vendor_header_mapping={
+                "source_sheet": "WrongSheet",
+                "header_row_index": 2,
+                "field_mappings": [
+                    {"canonical_field": "dst_code", "source_header": "IBIS codes"},
+                    {"canonical_field": "dst_code_name", "source_header": "Calendar"},
+                    {"canonical_field": "rate", "source_header": "TDE"},
+                    {"canonical_field": "effective_date", "source_header": "Start Date"},
+                    {"canonical_field": "billing_increment", "source_header": "Price Status"},
+                ],
+            },
+        )
+
+        self.assertEqual(cleaned_df["Dst Code"].iloc[0], "43")
+        self.assertEqual(cleaned_df["Dst Code Name"].iloc[0], "SPAIN")
+        self.assertEqual(cleaned_df["Effective Date"].iloc[0], "2026-01-21")
+        self.assertEqual(cleaned_df["Billing Increment"].iloc[0], "1/1")
+        self.assertAlmostEqual(float(cleaned_df["Rate"].iloc[0]), 0.56, places=6)
 
 
 # --- Custom file cleaning test ---

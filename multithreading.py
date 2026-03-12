@@ -17,6 +17,7 @@ from database import (
     insert_rate_upload,
     bulk_insert_rate_upload_details,
     mark_processing_stage,
+    fetch_active_vendor_header_mapping,
     fetch_vendor_date_format_by_sender_email,
     fetch_vendor_context_by_sender_email,
     vendor_has_pending_jera_upload_today,
@@ -512,15 +513,29 @@ def process_one_folder(folder: Path) -> str:
     # sender email -> vendor_contacts -> vendors.date_format
     vendor_fmt = None
     is_partial_vendor = False
-    vendor_ctx: Dict[str, Any] = {"vendor_id": None, "vendor_date_format": None, "is_partial": False}
+    vendor_ctx: Dict[str, Any] = {"vendor_id": None, "vendor_date_format": None, "is_partial": False, "is_mapped": False}
+    active_vendor_header_mapping: Optional[Dict[str, Any]] = None
+    vendor_mapping_error: Optional[str] = None
     try:
         vendor_ctx = fetch_vendor_context_by_sender_email(meta.get("sender"))
         vendor_fmt = vendor_ctx.get("vendor_date_format") or None
         is_partial_vendor = bool(vendor_ctx.get("is_partial"))
     except Exception:
-        vendor_ctx = {"vendor_id": None, "vendor_date_format": None, "is_partial": False}
+        vendor_ctx = {"vendor_id": None, "vendor_date_format": None, "is_partial": False, "is_mapped": False}
         vendor_fmt = None
         is_partial_vendor = False
+
+    if bool(vendor_ctx.get("is_mapped")):
+        vendor_id = vendor_ctx.get("vendor_id")
+        if vendor_id is None:
+            vendor_mapping_error = "Vendor is marked mapped but vendor_id could not be resolved"
+        else:
+            try:
+                active_vendor_header_mapping = fetch_active_vendor_header_mapping(vendor_id)
+            except Exception as exc:
+                vendor_mapping_error = f"Failed to fetch active vendor header mapping: {exc}"
+            if active_vendor_header_mapping is None and vendor_mapping_error is None:
+                vendor_mapping_error = f"No active vendor header mapping found for vendor_id {vendor_id}"
 
     if vendor_fmt:
         # Override metadata (even if it was auto-detected as YYYY-MM-DD)
@@ -706,9 +721,20 @@ def process_one_folder(folder: Path) -> str:
             fname = file_path.name.lower()
             # force ISO for jerasoft outputs
             date_fmt_to_use = "YYYY-MM-DD" if ("jerasoft_comparison_all" in fname or "jerasoft_comparison" in fname) else date_fmt
+            vendor_header_mapping_to_use = None
+            if "jerasoft" not in fname and bool(vendor_ctx.get("is_mapped")):
+                if vendor_mapping_error:
+                    raise ValueError(vendor_mapping_error)
+                vendor_header_mapping_to_use = active_vendor_header_mapping
 
             try:
-                cleaned_df = load_clean_rates(in_path, out_path, 0, date_format_email=date_fmt_to_use)
+                cleaned_df = load_clean_rates(
+                    in_path,
+                    out_path,
+                    0,
+                    date_format_email=date_fmt_to_use,
+                    vendor_header_mapping=vendor_header_mapping_to_use,
+                )
                 raw_name = Path(in_path).name
                 clean_name = Path(out_path).name
                 pre_map[raw_name] = True

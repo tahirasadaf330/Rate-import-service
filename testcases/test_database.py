@@ -56,6 +56,47 @@ class TestDatabaseModule(unittest.TestCase):
         self.assertFalse(database.vendor_has_pending_jera_upload_today(sender_email=""))
 
     @patch('database.get_conn')
+    def test_fetch_vendor_context_by_sender_email_includes_is_mapped(self, mock_get_conn):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_get_conn.return_value.__enter__.return_value = mock_conn
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = (7, 'YYYY-MM-DD', True, True)
+
+        result = database.fetch_vendor_context_by_sender_email('a@b.com')
+
+        self.assertEqual(result['vendor_id'], 7)
+        self.assertEqual(result['vendor_date_format'], 'YYYY-MM-DD')
+        self.assertTrue(result['is_partial'])
+        self.assertTrue(result['is_mapped'])
+        executed_sql = mock_cursor.execute.call_args_list[0].args[0]
+        self.assertIn('is_header_mapping_set', executed_sql)
+
+    @patch('database.get_conn')
+    def test_fetch_active_vendor_header_mapping_returns_latest_active(self, mock_get_conn):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_get_conn.return_value.__enter__.return_value = mock_conn
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = (22, 3)
+        mock_cursor.fetchall.return_value = [
+            ('dst_code', 'Rates', 8, 'IBIS codes'),
+            ('rate', 'Rates', 8, 'TDE'),
+            ('effective_date', 'Rates', 8, 'Start Date'),
+            ('billing_increment', 'Rates', 8, 'Price Status'),
+        ]
+
+        result = database.fetch_active_vendor_header_mapping(7)
+
+        self.assertEqual(result['vendor_header_mapping_id'], 22)
+        self.assertEqual(result['vendor_id'], 7)
+        self.assertEqual(result['version'], 3)
+        self.assertEqual(result['source_sheet'], 'Rates')
+        self.assertEqual(result['header_row_index'], 8)
+        self.assertEqual(len(result['field_mappings']), 4)
+        self.assertEqual(result['field_mappings'][0]['source_header'], 'IBIS codes')
+
+    @patch('database.get_conn')
     def test_set_processing_status_text_cases(self, mock_get_conn):
         mock_conn = MagicMock()
         mock_cursor = MagicMock()

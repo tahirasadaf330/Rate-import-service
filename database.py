@@ -659,10 +659,10 @@ def fetch_vendor_context_by_sender_email(email: Optional[str]) -> Dict[str, Any]
 
       vendor_contacts.email -> vendor_contacts.vendor_id -> vendors.date_format
 
-    Returns:
-      {"vendor_id": Optional[int], "vendor_date_format": Optional[str], "is_partial": bool}
+        Returns:
+            {"vendor_id": Optional[int], "vendor_date_format": Optional[str], "is_partial": bool, "is_mapped": bool}
     """
-    out: Dict[str, Any] = {"vendor_id": None, "vendor_date_format": None, "is_partial": False}
+    out: Dict[str, Any] = {"vendor_id": None, "vendor_date_format": None, "is_partial": False, "is_mapped": False}
     if not email:
         return out
     e = str(email).strip()
@@ -675,7 +675,9 @@ def fetch_vendor_context_by_sender_email(email: Optional[str]) -> Dict[str, Any]
             try:
                 cur.execute(
                     """
-                    SELECT vc.vendor_id, v.date_format, COALESCE(v.is_partial, FALSE) AS is_partial
+                    SELECT vc.vendor_id, v.date_format,
+                           COALESCE(v.is_partial, FALSE) AS is_partial,
+                          COALESCE(v.is_header_mapping_set, FALSE) AS is_mapped
                     FROM vendor_contacts vc
                     JOIN vendors v ON v.id = vc.vendor_id
                     WHERE LOWER(vc.email) = LOWER(%s)
@@ -690,7 +692,9 @@ def fetch_vendor_context_by_sender_email(email: Optional[str]) -> Dict[str, Any]
             except Exception:
                 cur.execute(
                     """
-                    SELECT vc.vendor_id, v.date_format, COALESCE(v.partial, FALSE) AS is_partial
+                    SELECT vc.vendor_id, v.date_format,
+                           COALESCE(v.partial, FALSE) AS is_partial,
+                          COALESCE(v.is_header_mapping_set, FALSE) AS is_mapped
                     FROM vendor_contacts vc
                     JOIN vendors v ON v.id = vc.vendor_id
                     WHERE LOWER(vc.email) = LOWER(%s)
@@ -704,13 +708,79 @@ def fetch_vendor_context_by_sender_email(email: Optional[str]) -> Dict[str, Any]
                 row = cur.fetchone()
         if not row:
             return out
-        vendor_id, fmt, is_partial = row[0], row[1], row[2]
+        vendor_id, fmt, is_partial, is_mapped = row[0], row[1], row[2], row[3]
         out["vendor_id"] = int(vendor_id) if vendor_id is not None else None
         out["vendor_date_format"] = (str(fmt).strip() if fmt is not None else None) or None
         out["is_partial"] = bool(is_partial)
+        out["is_mapped"] = bool(is_mapped)
         return out
     except Exception:
         return out
+
+
+def fetch_active_vendor_header_mapping(vendor_id: Optional[int]) -> Optional[Dict[str, Any]]:
+    """Fetch the latest active header mapping and field rows for a vendor."""
+    if vendor_id is None:
+        return None
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, version
+            FROM vendor_header_mappings
+            WHERE vendor_id = %s
+              AND COALESCE(is_active, FALSE) = TRUE
+            ORDER BY version DESC, id DESC
+            LIMIT 1
+            """,
+            (vendor_id,),
+        )
+        mapping_row = cur.fetchone()
+        if not mapping_row:
+            return None
+
+        mapping_id, version = mapping_row
+
+        cur.execute(
+            """
+            SELECT canonical_field, source_sheet, header_row_index, source_header
+            FROM vendor_header_mapping_fields
+            WHERE vendor_header_mapping_id = %s
+            ORDER BY id ASC
+            """,
+            (mapping_id,),
+        )
+        rows = cur.fetchall()
+
+    if not rows:
+        return None
+
+    field_mappings: List[Dict[str, Any]] = []
+    source_sheet = None
+    header_row_index = None
+    for canonical_field, row_source_sheet, row_header_index, source_header in rows:
+        clean_source_sheet = (str(row_source_sheet).strip() if row_source_sheet is not None else "") or None
+        if source_sheet is None and clean_source_sheet:
+            source_sheet = clean_source_sheet
+        if header_row_index is None and row_header_index is not None:
+            header_row_index = int(row_header_index)
+        field_mappings.append(
+            {
+                "canonical_field": canonical_field,
+                "source_sheet": clean_source_sheet,
+                "header_row_index": int(row_header_index) if row_header_index is not None else None,
+                "source_header": source_header,
+            }
+        )
+
+    return {
+        "vendor_header_mapping_id": int(mapping_id),
+        "vendor_id": int(vendor_id),
+        "version": int(version) if version is not None else None,
+        "source_sheet": source_sheet,
+        "header_row_index": header_row_index,
+        "field_mappings": field_mappings,
+    }
 
 
 def fetch_vendor_date_format_by_sender_email(email: Optional[str]) -> Optional[str]:
