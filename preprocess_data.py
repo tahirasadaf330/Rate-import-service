@@ -1023,6 +1023,56 @@ def _canonical_name_from_mapping_field(field_name: object) -> Optional[str]:
     return explicit.get(key)
 
 
+def _replace_columns_with_series(
+    df: pd.DataFrame,
+    source_cols: list[str],
+    target_name: str,
+    values: pd.Series,
+) -> pd.DataFrame:
+    first_pos = min(int(df.columns.get_loc(col)) for col in source_cols)
+    df = df.drop(columns=source_cols)
+    df.insert(min(first_pos, len(df.columns)), target_name, values)
+    return df
+
+
+def _normalize_dst_code_fragment(value: object) -> str:
+    s = str(value).strip()
+    if not s or s.lower() in {"nan", "none", "nat"}:
+        return ""
+    if re.fullmatch(r"\d+\.0+", s):
+        return s.split(".", 1)[0]
+    return re.sub(r"\D+", "", s)
+
+
+def _merge_vendor_special_mapping(
+    df: pd.DataFrame,
+    canonical_name: str,
+    source_cols: list[str],
+) -> pd.Series:
+    if canonical_name == "Dst Code":
+        pieces = [df[col].map(_normalize_dst_code_fragment) for col in source_cols]
+
+        def _merge_dst(row: tuple[str, ...]) -> str:
+            return "".join(part for part in row if part)
+
+        return pd.Series(list(map(_merge_dst, zip(*pieces))), index=df.index, dtype="object")
+
+    if len(source_cols) == 1:
+        return df[source_cols[0]].astype(str).str.strip()
+
+    pieces = [df[col].map(_last_num).fillna("") for col in source_cols]
+
+    def _merge_billing(row: tuple[str, ...]) -> str:
+        nums = [part for part in row if part]
+        if not nums:
+            return ""
+        if len(nums) == 1:
+            return f"{nums[0]}/{nums[0]}"
+        return f"{nums[0]}/{nums[1]}"
+
+    return pd.Series(list(map(_merge_billing, zip(*pieces))), index=df.index, dtype="object")
+
+
 def _apply_vendor_header_mapping(df: pd.DataFrame, field_mappings: list[dict[str, Any]]) -> pd.DataFrame:
     normalized_headers: Dict[str, list[str]] = {}
     for col in df.columns:
@@ -1030,7 +1080,8 @@ def _apply_vendor_header_mapping(df: pd.DataFrame, field_mappings: list[dict[str
         normalized_headers.setdefault(key, []).append(col)
 
     rename_map: Dict[str, str] = {}
-    target_sources: Dict[str, str] = {}
+    target_sources: Dict[str, list[str]] = {}
+    multi_source_allowed = {"Billing Increment", "Dst Code"}
 
     for row in field_mappings:
         source_header = row.get("source_header")
@@ -1046,14 +1097,24 @@ def _apply_vendor_header_mapping(df: pd.DataFrame, field_mappings: list[dict[str
             raise ValueError(f"Mapped source header is ambiguous in sheet: {source_header}")
 
         source_col = candidates[0]
-        existing_source = target_sources.get(canonical_name)
-        if existing_source and existing_source != source_col:
+        existing_sources = target_sources.setdefault(canonical_name, [])
+        if source_col in existing_sources:
+            continue
+        if canonical_name not in multi_source_allowed and existing_sources:
             raise ValueError(f"Multiple source headers map to canonical field: {canonical_name}")
 
-        rename_map[source_col] = canonical_name
-        target_sources[canonical_name] = source_col
+        existing_sources.append(source_col)
+        if canonical_name not in multi_source_allowed:
+            rename_map[source_col] = canonical_name
 
     df = df.rename(columns=rename_map)
+
+    for canonical_name in ("Dst Code", "Billing Increment"):
+        source_cols = target_sources.get(canonical_name) or []
+        if not source_cols:
+            continue
+        merged = _merge_vendor_special_mapping(df, canonical_name, source_cols)
+        df = _replace_columns_with_series(df, source_cols, canonical_name, merged)
 
     missing = [col for col in REQUIRED_COLS if col not in df.columns]
     if missing:
