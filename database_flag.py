@@ -76,7 +76,7 @@ def _folder_is_today_or_newer(meta: dict) -> bool:
     Falls back to date_utc if receivedDateTime_raw is missing.
     If both are missing/unparseable, we allow (return True).
     """
-    cutoff_date = date.today() - timedelta(days=1)
+    cutoff_date = date.today() - timedelta(days=2)
     raw = (meta.get("receivedDateTime_raw") or "").strip()
     if raw:
         try:

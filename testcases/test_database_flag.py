@@ -44,7 +44,12 @@ class TestDatabaseFlag(unittest.TestCase):
         today = date.today().isoformat()
         meta = {'receivedDateTime_raw': today + 'T00:00:00Z'}
         self.assertTrue(database_flag._folder_is_today_or_newer(meta))
+        two_days_ago = (date.today() - database_flag.timedelta(days=2)).isoformat()
+        meta = {'receivedDateTime_raw': two_days_ago + 'T00:00:00Z'}
+        self.assertTrue(database_flag._folder_is_today_or_newer(meta))
         meta = {'date_utc': today}
+        self.assertTrue(database_flag._folder_is_today_or_newer(meta))
+        meta = {'date_utc': two_days_ago}
         self.assertTrue(database_flag._folder_is_today_or_newer(meta))
         meta = {'receivedDateTime_raw': '2000-01-01T00:00:00Z'}
         self.assertFalse(database_flag._folder_is_today_or_newer(meta))

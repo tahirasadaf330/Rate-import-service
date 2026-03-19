@@ -1143,6 +1143,72 @@ class TestRealFileProcessing(unittest.TestCase):
         self.assertEqual(cleaned_df["Billing Increment"].iloc[0], "1/1")
         self.assertAlmostEqual(float(cleaned_df["Rate"].iloc[0]), 0.56, places=6)
 
+    def test_load_clean_rates_merges_vendor_mapped_billing_increment_in_mapping_order(self):
+        from preprocess_data import load_clean_rates
+
+        src_path = os.path.join(self.temp_dir, "mapped_vendor_billing_pair.xlsx")
+        out_path = os.path.join(self.temp_dir, "mapped_vendor_billing_pair_cleaned.xlsx")
+
+        mapped_df = pd.DataFrame({
+            "Code": ["43", "44", "45", "46"],
+            "Rate Value": ["0.56", "0.57", "0.58", "0.59"],
+            "Start Date": ["2026-01-21", "2026-01-21", "2026-01-21", "2026-01-21"],
+            "INC": ["60", "60", "60", "60"],
+            "MIN": ["1", "1", "1", "1"],
+        })
+        mapped_df.to_excel(src_path, index=False)
+
+        cleaned_df = load_clean_rates(
+            path=src_path,
+            output_path=out_path,
+            sheet=0,
+            date_format_email="AUTO",
+            vendor_header_mapping={
+                "field_mappings": [
+                    {"canonical_field": "dst_code", "source_header": "Code"},
+                    {"canonical_field": "rate", "source_header": "Rate Value"},
+                    {"canonical_field": "effective_date", "source_header": "Start Date"},
+                    {"canonical_field": "billing_increment", "source_header": "MIN"},
+                    {"canonical_field": "billing_increment", "source_header": "INC"},
+                ],
+            },
+        )
+
+        self.assertEqual(cleaned_df["Billing Increment"].iloc[0], "1/60")
+
+    def test_load_clean_rates_merges_vendor_mapped_dst_code_in_mapping_order(self):
+        from preprocess_data import load_clean_rates
+
+        src_path = os.path.join(self.temp_dir, "mapped_vendor_dst_pair.xlsx")
+        out_path = os.path.join(self.temp_dir, "mapped_vendor_dst_pair_cleaned.xlsx")
+
+        mapped_df = pd.DataFrame({
+            "Country Code": ["92", "92", "92", "92"],
+            "Area Code": ["44", "45", "46", "47"],
+            "Rate Value": ["0.56", "0.57", "0.58", "0.59"],
+            "Start Date": ["2026-01-21", "2026-01-21", "2026-01-21", "2026-01-21"],
+            "Billing Increment": ["1/1", "1/1", "1/1", "1/1"],
+        })
+        mapped_df.to_excel(src_path, index=False)
+
+        cleaned_df = load_clean_rates(
+            path=src_path,
+            output_path=out_path,
+            sheet=0,
+            date_format_email="AUTO",
+            vendor_header_mapping={
+                "field_mappings": [
+                    {"canonical_field": "dst_code", "source_header": "Country Code"},
+                    {"canonical_field": "dst_code", "source_header": "Area Code"},
+                    {"canonical_field": "rate", "source_header": "Rate Value"},
+                    {"canonical_field": "effective_date", "source_header": "Start Date"},
+                    {"canonical_field": "billing_increment", "source_header": "Billing Increment"},
+                ],
+            },
+        )
+
+        self.assertEqual(cleaned_df["Dst Code"].iloc[0], "9244")
+
 
 # --- Custom file cleaning test ---
 def clean_and_show_file(file_path, date_format='AUTO'):
