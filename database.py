@@ -1459,7 +1459,6 @@ def update_reprocessing_enabled(
         return affected
 
 REPROCESS_QUEUED_STATUS = "queued_reprocess"
-REPROCESS_STALE_PROCESSING_HOURS = 1
 
 def get_reprocessing_enabled_directories(limit: Optional[int] = None) -> List[str]:
     """
@@ -1469,7 +1468,7 @@ def get_reprocessing_enabled_directories(limit: Optional[int] = None) -> List[st
     This includes:
     - failed rows
     - explicitly re-queued rows
-    - stale processing rows that were manually re-flagged for reprocessing
+    - processing rows that were manually re-flagged for reprocessing
     
     Args:
         limit: Optional limit on number of results
@@ -1485,10 +1484,7 @@ def get_reprocessing_enabled_directories(limit: Optional[int] = None) -> List[st
                     AND (
                         status LIKE 'failed%%'
                         OR COALESCE(status, '') = %s
-                        OR (
-                            COALESCE(status, '') = 'processing'
-                            AND updated_at < NOW() - (%s * INTERVAL '1 hour')
-                        )
+                        OR COALESCE(status, '') = 'processing'
                     )
         ORDER BY updated_at DESC
     """
@@ -1497,9 +1493,9 @@ def get_reprocessing_enabled_directories(limit: Optional[int] = None) -> List[st
     
     with get_conn() as conn, conn.cursor() as cur:
         if limit is not None:
-            cur.execute(sql, (REPROCESS_QUEUED_STATUS, REPROCESS_STALE_PROCESSING_HOURS, limit))
+            cur.execute(sql, (REPROCESS_QUEUED_STATUS, limit))
         else:
-            cur.execute(sql, (REPROCESS_QUEUED_STATUS, REPROCESS_STALE_PROCESSING_HOURS))
+            cur.execute(sql, (REPROCESS_QUEUED_STATUS,))
         rows = cur.fetchall()
     
     return [row[0] for row in rows if row[0]]
@@ -1508,8 +1504,8 @@ def get_failed_directories_for_reprocessing(limit: Optional[int] = None) -> List
     """
     Get processing status records that are relevant to reprocessing.
 
-    This includes all failed rows plus manually re-flagged stale rows that are
-    safe to reset again.
+    This includes all failed rows plus manually re-flagged queued/processing
+    rows that are safe to reset again.
     
     Args:
         limit: Optional limit on number of results
@@ -1528,10 +1524,7 @@ def get_failed_directories_for_reprocessing(limit: Optional[int] = None) -> List
                             is_reprocessing_enabled = TRUE
                             AND (
                                 COALESCE(status, '') = %s
-                                OR (
-                                    COALESCE(status, '') = 'processing'
-                                    AND updated_at < NOW() - (%s * INTERVAL '1 hour')
-                                )
+                                OR COALESCE(status, '') = 'processing'
                             )
                         )
                     )
@@ -1543,9 +1536,9 @@ def get_failed_directories_for_reprocessing(limit: Optional[int] = None) -> List
     
     with get_conn() as conn, conn.cursor() as cur:
         if limit is not None:
-            cur.execute(sql, (REPROCESS_QUEUED_STATUS, REPROCESS_STALE_PROCESSING_HOURS, limit))
+            cur.execute(sql, (REPROCESS_QUEUED_STATUS, limit))
         else:
-            cur.execute(sql, (REPROCESS_QUEUED_STATUS, REPROCESS_STALE_PROCESSING_HOURS))
+            cur.execute(sql, (REPROCESS_QUEUED_STATUS,))
         rows = cur.fetchall()
     
     keys = [
