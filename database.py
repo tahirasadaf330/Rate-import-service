@@ -1459,7 +1459,7 @@ def update_reprocessing_enabled(
         return affected
 
 REPROCESS_QUEUED_STATUS = "queued_reprocess"
-REPROCESS_STALE_PROCESSING_HOURS = 48
+REPROCESS_STALE_PROCESSING_HOURS = 1
 
 def get_reprocessing_enabled_directories(limit: Optional[int] = None) -> List[str]:
     """
