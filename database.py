@@ -1216,13 +1216,16 @@ def upsert_processing_status(
     INSERT INTO processing_statuses (
         internet_message_id, directory_name, sender_email, email_subject, email_received_at,
         is_reprocessing_enabled, created_at, updated_at
-    ) VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+    ) VALUES (%s, %s, %s, %s, %s, COALESCE(%s, FALSE), NOW(), NOW())
     ON CONFLICT (internet_message_id) DO UPDATE SET
         directory_name           = EXCLUDED.directory_name,
         sender_email             = COALESCE(EXCLUDED.sender_email, processing_statuses.sender_email),
         email_subject            = COALESCE(EXCLUDED.email_subject, processing_statuses.email_subject),
         email_received_at        = COALESCE(EXCLUDED.email_received_at, processing_statuses.email_received_at),
-        is_reprocessing_enabled  = COALESCE(EXCLUDED.is_reprocessing_enabled, processing_statuses.is_reprocessing_enabled),
+        is_reprocessing_enabled  = CASE
+                                     WHEN %s IS NULL THEN processing_statuses.is_reprocessing_enabled
+                                     ELSE %s
+                                   END,
         updated_at               = NOW()
     RETURNING id;
     """
@@ -1230,7 +1233,16 @@ def upsert_processing_status(
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             sql,
-            (internet_message_id, directory_name, sender_email, email_subject, email_received_at, is_reprocessing_enabled),
+            (
+                internet_message_id,
+                directory_name,
+                sender_email,
+                email_subject,
+                email_received_at,
+                is_reprocessing_enabled,
+                is_reprocessing_enabled,
+                is_reprocessing_enabled,
+            ),
         )
         rid = cur.fetchone()[0]
         conn.commit()
@@ -1271,11 +1283,22 @@ def ensure_row_by_directory(
                        sender_email             = COALESCE(%s, sender_email),
                        email_subject            = COALESCE(%s, email_subject),
                        email_received_at        = COALESCE(%s, email_received_at),
-                       is_reprocessing_enabled  = COALESCE(%s, is_reprocessing_enabled),
+                       is_reprocessing_enabled  = CASE
+                                                     WHEN %s IS NULL THEN is_reprocessing_enabled
+                                                     ELSE %s
+                                                  END,
                        updated_at               = NOW()
                  WHERE id = %s
                 """,
-                (internet_message_id, sender_email, email_subject, email_received_at, is_reprocessing_enabled, rid),
+                (
+                    internet_message_id,
+                    sender_email,
+                    email_subject,
+                    email_received_at,
+                    is_reprocessing_enabled,
+                    is_reprocessing_enabled,
+                    rid,
+                ),
             )
             conn.commit()
             return rid
@@ -1288,7 +1311,7 @@ def ensure_row_by_directory(
             INSERT INTO processing_statuses
               (internet_message_id, directory_name, sender_email, email_subject, email_received_at,
                is_reprocessing_enabled, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+            VALUES (%s, %s, %s, %s, %s, COALESCE(%s, FALSE), NOW(), NOW())
             RETURNING id
             """,
             (internet_message_id, directory_name, sender_email, email_subject, email_received_at, is_reprocessing_enabled),
@@ -1380,7 +1403,7 @@ def mark_processing_stage(
         # While progressing through earlier stages, show 'processing'
         # but don't overwrite a terminal state if it's already there.
         set_bits.append(
-            "status = CASE WHEN status IN ('failed','success') THEN status ELSE 'processing' END"
+            "status = CASE WHEN status = 'success' OR status LIKE 'failed%%' THEN status ELSE 'processing' END"
         )
 
     sql = f"UPDATE processing_statuses SET {', '.join(set_bits)} WHERE {where_sql}"

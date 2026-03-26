@@ -484,6 +484,12 @@ class TestDatabaseModule(unittest.TestCase):
         with self.assertRaises(ValueError):
             upsert_processing_status(internet_message_id='id', directory_name=None)
 
+        executed_sql = mock_cursor.execute.call_args_list[0].args[0]
+        executed_params = mock_cursor.execute.call_args_list[0].args[1]
+        self.assertIn("COALESCE(%s, FALSE)", executed_sql)
+        self.assertIn("WHEN %s IS NULL THEN processing_statuses.is_reprocessing_enabled", executed_sql)
+        self.assertEqual(executed_params[-2:], (None, None))
+
     @patch('database.get_conn')
     def test_ensure_row_by_directory_cases(self, mock_get_conn):
         from database import ensure_row_by_directory
@@ -494,9 +500,15 @@ class TestDatabaseModule(unittest.TestCase):
         # Simulate row exists
         mock_cursor.fetchone.side_effect = [[1], None]
         ensure_row_by_directory(directory_name='dir1')
+        executed_sql = mock_cursor.execute.call_args_list[1].args[0]
+        executed_params = mock_cursor.execute.call_args_list[1].args[1]
+        self.assertIn("WHEN %s IS NULL THEN is_reprocessing_enabled", executed_sql)
+        self.assertEqual(executed_params[-3:-1], (None, None))
         # Simulate row does not exist, requires internet_message_id
         mock_cursor.fetchone.side_effect = [None, [2]]
         ensure_row_by_directory(directory_name='dir2', internet_message_id='id2')
+        insert_sql = mock_cursor.execute.call_args_list[3].args[0]
+        self.assertIn("COALESCE(%s, FALSE)", insert_sql)
         # Test missing directory_name
         with self.assertRaises(ValueError):
             ensure_row_by_directory(directory_name='')
@@ -522,6 +534,9 @@ class TestDatabaseModule(unittest.TestCase):
         mark_processing_stage(directory_name='dir', stage='rate_uploaded', final_status=True)
         self.assertFalse(mock_upsert.called)
 
+        # Non-final progress updates must preserve any failure status prefix.
+        mark_processing_stage(directory_name='dir', stage='jera_fetched')
+
         # Valid stage, final_status False (with and without error message)
         mark_processing_stage(directory_name='dir', stage='rate_uploaded', final_status=False)
         mark_processing_stage(directory_name='dir', stage='rate_uploaded', final_status=False, error_message='some reason')
@@ -535,6 +550,8 @@ class TestDatabaseModule(unittest.TestCase):
         self.assertTrue(update_calls)
         self.assertEqual(update_calls[-1].args[1][0], expected_status)
         self.assertLessEqual(len(update_calls[-1].args[1][0]), 255)
+        success_update_sql = next(call.args[0] for call in update_calls if "status = CASE WHEN" in call.args[0])
+        self.assertIn("status LIKE 'failed%%'", success_update_sql)
 
         self.assertEqual(mock_upsert.call_args.kwargs.get('status_text'), expected_status)
 
