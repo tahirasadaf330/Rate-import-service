@@ -356,6 +356,7 @@ class TestMultithreading(unittest.TestCase):
         meta["jerasoft_preprocessed"] = True
         meta["comparision_result"] = {"result": "skip for test"}  # avoid compare stage
         meta["preprocessed_results"] = {}
+        meta["preprocess_errors"] = {"vendor.csv": "old parse error"}
         save_metadata(self.test_dir, meta)
 
         vendor = self.test_dir / "vendor.csv"
@@ -375,6 +376,8 @@ class TestMultithreading(unittest.TestCase):
         # it should attempt DB push and then skip because comparision_result is not ok
         self.assertIn("skip DB push", msg)
         self.assertEqual(seen.get("date_format_email"), "MM-DD-YYYY")
+        meta2 = load_metadata(self.test_dir)
+        self.assertNotIn("preprocess_errors", meta2)
 
     def test_cleaning_uses_active_vendor_header_mapping_when_vendor_is_mapped(self):
         meta = load_metadata(self.test_dir)

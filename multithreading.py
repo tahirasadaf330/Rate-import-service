@@ -739,6 +739,17 @@ def process_one_folder(folder: Path) -> str:
                 clean_name = Path(out_path).name
                 pre_map[raw_name] = True
                 pre_map[clean_name] = True
+                try:
+                    err_map = meta.get("preprocess_errors")
+                    if isinstance(err_map, dict):
+                        err_map.pop(raw_name, None)
+                        err_map.pop(clean_name, None)
+                        if err_map:
+                            meta["preprocess_errors"] = err_map
+                        else:
+                            meta.pop("preprocess_errors", None)
+                except Exception:
+                    pass
 
                 # small-output hint
                 try:

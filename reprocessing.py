@@ -32,8 +32,8 @@ class ReprocessingManager:
     
     def get_directories_for_reprocessing(self) -> List[Dict[str, Any]]:
         """
-        Get all failed directories that are eligible for reprocessing.
-        Only returns failed emails (status = 'failed').
+        Get all directories that are eligible for reprocessing.
+        This includes failed rows and manually re-flagged stale rows.
         """
         return get_failed_directories_for_reprocessing()
     
@@ -88,7 +88,7 @@ class ReprocessingManager:
         Removes these flags:
         - date_verification_* flags  
         - jerasoft_preprocessed, need_human_eval_jerasoft
-        - need_human_eval_pre, preprocessed_results
+        - need_human_eval_pre, preprocessed_results, preprocess_errors
         - final_ok, attachment_stats, comparision_result
         - rate_upload_id, results_pushed
         
@@ -126,6 +126,7 @@ class ReprocessingManager:
                 "human_eval_details_pre",
                 "need_human_eval_pre",
                 "preprocessed_results",
+                "preprocess_errors",
                 
                 # Final processing flags
                 "final_ok",

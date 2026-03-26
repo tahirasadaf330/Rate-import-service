@@ -87,9 +87,18 @@ class TestReprocessingManager(unittest.TestCase):
     @patch('reprocessing.json.dump')
     def test_clean_metadata_flags_preserves_jera_fetched(self, mock_dump, mock_open, mock_load, mock_exists):
         mock_exists.return_value = True
-        mock_load.return_value = {'jera_fetched': True, 'date_verification_ingestion': True}
+        mock_load.return_value = {
+            'jera_fetched': True,
+            'date_verification_ingestion': True,
+            'preprocessed_results': {'vendor.csv': False},
+            'preprocess_errors': {'vendor.csv': 'old error'},
+        }
         result = self.manager._clean_metadata_flags(Path('test_attachments/dir1'))
         self.assertTrue(result)
+        written = mock_dump.call_args.args[0]
+        self.assertTrue(written.get('jera_fetched'))
+        self.assertNotIn('preprocessed_results', written)
+        self.assertNotIn('preprocess_errors', written)
 
     @patch('reprocessing.Path.exists')
     def test_clean_metadata_flags_missing_metadata(self, mock_exists):

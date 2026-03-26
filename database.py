@@ -1458,23 +1458,38 @@ def update_reprocessing_enabled(
         conn.commit()
         return affected
 
+REPROCESS_QUEUED_STATUS = "queued_reprocess"
+REPROCESS_STALE_PROCESSING_HOURS = 48
+
 def get_reprocessing_enabled_directories(limit: Optional[int] = None) -> List[str]:
     """
-    Get a list of directory names where reprocessing is enabled AND status is failed.
-    Only shows reprocessing option for failed emails, not successful ones.
+    Get a list of directory names where reprocessing is enabled and the row is
+    eligible to be reset again.
+
+    This includes:
+    - failed rows
+    - explicitly re-queued rows
+    - stale processing rows that were manually re-flagged for reprocessing
     
     Args:
         limit: Optional limit on number of results
         
     Returns:
-        List of directory names with reprocessing enabled and failed status
+        List of directory names with reprocessing enabled and eligible status
     """
     base_sql = """
         SELECT directory_name
         FROM processing_statuses
                 WHERE is_reprocessing_enabled = TRUE
                     AND directory_name IS NOT NULL
-                    AND status LIKE 'failed%'
+                    AND (
+                        status LIKE 'failed%%'
+                        OR COALESCE(status, '') = %s
+                        OR (
+                            COALESCE(status, '') = 'processing'
+                            AND updated_at < NOW() - (%s * INTERVAL '1 hour')
+                        )
+                    )
         ORDER BY updated_at DESC
     """
     
@@ -1482,30 +1497,44 @@ def get_reprocessing_enabled_directories(limit: Optional[int] = None) -> List[st
     
     with get_conn() as conn, conn.cursor() as cur:
         if limit is not None:
-            cur.execute(sql, (limit,))
+            cur.execute(sql, (REPROCESS_QUEUED_STATUS, REPROCESS_STALE_PROCESSING_HOURS, limit))
         else:
-            cur.execute(sql)
+            cur.execute(sql, (REPROCESS_QUEUED_STATUS, REPROCESS_STALE_PROCESSING_HOURS))
         rows = cur.fetchall()
     
     return [row[0] for row in rows if row[0]]
 
 def get_failed_directories_for_reprocessing(limit: Optional[int] = None) -> List[Dict[str, Any]]:
     """
-    Get failed processing status records that are eligible for reprocessing.
-    Only returns failed emails (not successful ones).
+    Get processing status records that are relevant to reprocessing.
+
+    This includes all failed rows plus manually re-flagged stale rows that are
+    safe to reset again.
     
     Args:
         limit: Optional limit on number of results
         
     Returns:
-        List of dictionaries with processing status information for failed emails
+        List of dictionaries with processing status information for eligible rows
     """
     base_sql = """
         SELECT id, internet_message_id, directory_name, sender_email, email_subject, 
                email_received_at, status, is_reprocessing_enabled,
                created_at, updated_at
                 FROM processing_statuses
-                WHERE status LIKE 'failed%'
+                WHERE (
+                        status LIKE 'failed%%'
+                        OR (
+                            is_reprocessing_enabled = TRUE
+                            AND (
+                                COALESCE(status, '') = %s
+                                OR (
+                                    COALESCE(status, '') = 'processing'
+                                    AND updated_at < NOW() - (%s * INTERVAL '1 hour')
+                                )
+                            )
+                        )
+                    )
                     AND directory_name IS NOT NULL
         ORDER BY updated_at DESC
     """
@@ -1514,9 +1543,9 @@ def get_failed_directories_for_reprocessing(limit: Optional[int] = None) -> List
     
     with get_conn() as conn, conn.cursor() as cur:
         if limit is not None:
-            cur.execute(sql, (limit,))
+            cur.execute(sql, (REPROCESS_QUEUED_STATUS, REPROCESS_STALE_PROCESSING_HOURS, limit))
         else:
-            cur.execute(sql)
+            cur.execute(sql, (REPROCESS_QUEUED_STATUS, REPROCESS_STALE_PROCESSING_HOURS))
         rows = cur.fetchall()
     
     keys = [

@@ -2,7 +2,13 @@ from typing import Iterable, Tuple, Optional, Dict, Any, List, Mapping
 from pathlib import Path
 import json
 from datetime import date, datetime, timezone, timedelta
-from database import mark_ingest_processed, upsert_processing_status, get_processing_status, get_conn
+from database import (
+    mark_ingest_processed,
+    upsert_processing_status,
+    get_processing_status,
+    get_conn,
+    REPROCESS_QUEUED_STATUS,
+)
 from date_verification import _parse_iso_utc_dt
 
 
@@ -214,13 +220,13 @@ def reset_processing_flags(directory_name: str, attachments_root: str = "attachm
                 is_file_cleaned = FALSE,
                 is_rate_compared = FALSE, 
                 is_rate_uploaded = FALSE,
-                status = 'processing',
+                status = %s,
                 updated_at = NOW()
             WHERE directory_name = %s
         """
         
         with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(sql, (preserve_jera, directory_name))
+            cur.execute(sql, (preserve_jera, REPROCESS_QUEUED_STATUS, directory_name))
             affected = cur.rowcount
             conn.commit()
         

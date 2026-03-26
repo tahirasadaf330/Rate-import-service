@@ -104,6 +104,10 @@ class TestDatabaseFlag(unittest.TestCase):
              patch('builtins.open', unittest.mock.mock_open(read_data=json.dumps({'jera_fetched': True}))):
             result = database_flag.reset_processing_flags('dir1', 'attachments')
             self.assertTrue(result)
+        sql = mock_cursor.execute.call_args_list[0].args[0]
+        params = mock_cursor.execute.call_args_list[0].args[1]
+        self.assertIn("status = %s", sql)
+        self.assertEqual(params[1], database_flag.REPROCESS_QUEUED_STATUS)
 
     @patch('database_flag.get_processing_status')
     @patch('database_flag.get_conn')
