@@ -167,7 +167,9 @@ def seed_processing_status_rows(attachments_root: str | Path = "attachments") ->
                 sender_email=sender_email,
                 email_subject=email_subject,
                 email_received_at=email_received_at,
-                is_reprocessing_enabled=False,  # Default to False for new entries
+                # Preserve the current DB flag on existing rows. Passing False here
+                # would overwrite a user-triggered reprocess request during seeding.
+                is_reprocessing_enabled=None,
             )
             upserts += 1
             print(f"[STATUS] ensured processing_statuses id={_id} for {d.name}")

@@ -89,6 +89,8 @@ class TestDatabaseFlag(unittest.TestCase):
             mock_upsert.return_value = 1
             result = database_flag.seed_processing_status_rows('attachments')
             self.assertEqual(result, (1, 1, 0))
+            _, kwargs = mock_upsert.call_args
+            self.assertIsNone(kwargs["is_reprocessing_enabled"])
 
     @patch('database_flag.get_processing_status')
     @patch('database_flag.get_conn')

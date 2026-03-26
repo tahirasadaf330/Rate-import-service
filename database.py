@@ -1468,7 +1468,6 @@ def get_reprocessing_enabled_directories(limit: Optional[int] = None) -> List[st
     This includes:
     - failed rows
     - explicitly re-queued rows
-    - processing rows that were manually re-flagged for reprocessing
     
     Args:
         limit: Optional limit on number of results
@@ -1484,7 +1483,6 @@ def get_reprocessing_enabled_directories(limit: Optional[int] = None) -> List[st
                     AND (
                         status LIKE 'failed%%'
                         OR COALESCE(status, '') = %s
-                        OR COALESCE(status, '') = 'processing'
                     )
         ORDER BY updated_at DESC
     """
@@ -1504,8 +1502,7 @@ def get_failed_directories_for_reprocessing(limit: Optional[int] = None) -> List
     """
     Get processing status records that are relevant to reprocessing.
 
-    This includes all failed rows plus manually re-flagged queued/processing
-    rows that are safe to reset again.
+    This includes all failed rows plus manually re-flagged queued rows.
     
     Args:
         limit: Optional limit on number of results
@@ -1522,10 +1519,7 @@ def get_failed_directories_for_reprocessing(limit: Optional[int] = None) -> List
                         status LIKE 'failed%%'
                         OR (
                             is_reprocessing_enabled = TRUE
-                            AND (
-                                COALESCE(status, '') = %s
-                                OR COALESCE(status, '') = 'processing'
-                            )
+                            AND COALESCE(status, '') = %s
                         )
                     )
                     AND directory_name IS NOT NULL

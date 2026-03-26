@@ -632,6 +632,8 @@ class TestDatabaseModule(unittest.TestCase):
         dirs = get_reprocessing_enabled_directories()
         self.assertIn('dir1', dirs)
         self.assertIn('dir2', dirs)
+        executed_sql = mock_cursor.execute.call_args_list[0].args[0]
+        self.assertNotIn("COALESCE(status, '') = 'processing'", executed_sql)
         # Test empty result
         mock_cursor.fetchall.return_value = []
         self.assertEqual(get_reprocessing_enabled_directories(), [])
@@ -647,6 +649,8 @@ class TestDatabaseModule(unittest.TestCase):
         # limit None
         result = get_failed_directories_for_reprocessing()
         self.assertIsInstance(result, list)
+        executed_sql = mock_cursor.execute.call_args_list[0].args[0]
+        self.assertNotIn("COALESCE(status, '') = 'processing'", executed_sql)
         # limit integer
         result = get_failed_directories_for_reprocessing(1)
         self.assertIsInstance(result, list)
