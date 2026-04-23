@@ -145,5 +145,160 @@ class TestJerasoft(unittest.TestCase):
         self.assertEqual(result['table_id'], 42)
         self.assertEqual(result['saved_to'], 'dummy.xlsx')
 
+    # --- Requirement 1: Multiple tables after filtering should return error ---
+
+    @patch('jerasoft.fetch_all_tables')
+    def test_find_best_term_table_single_match(self, mock_fetch):
+        """Exactly 1 table after company+prefix filter → returns that table."""
+        mock_fetch.return_value = [
+            {'id': 10, 'name': 'TERM-CITIC TELECOM-CC-PREFIX:NONE'},
+        ]
+        table_id, best_table, top_scored = jerasoft.find_best_term_table(
+            target_query='CITIC TELECOM',
+            subject='[CITIC TELECOM] [PRM] [NONE] [USD]',
+            prefix_code='NONE',
+        )
+        self.assertEqual(table_id, 10)
+        self.assertEqual(best_table['name'], 'TERM-CITIC TELECOM-CC-PREFIX:NONE')
+
+    @patch('jerasoft.fetch_all_tables')
+    def test_find_best_term_table_multiple_match_returns_error(self, mock_fetch):
+        """More than 1 table after company+prefix filter → returns error string."""
+        mock_fetch.return_value = [
+            {'id': 10, 'name': 'TERM-CITIC TELECOM INTERNATIONAL LIMITED-CC-PREFIX:NONE'},
+            {'id': 20, 'name': 'TERM-CITIC TELECOM INTERNATIONAL HOLDINGS LIMITED-STANDARD-PREFIX:NONE'},
+        ]
+        result = jerasoft.find_best_term_table(
+            target_query='CITIC TELECOM',
+            subject='[CITIC TELECOM] [PRM] [NONE] [USD]',
+            prefix_code='NONE',
+        )
+        # Should return error tuple (string, "", "")
+        self.assertIsInstance(result[0], str)
+        self.assertIn('Multiple tables found', result[0])
+        self.assertEqual(result[1], '')
+        self.assertEqual(result[2], '')
+
+    @patch('jerasoft.fetch_all_tables')
+    def test_find_best_term_table_no_match(self, mock_fetch):
+        """No tables match company keyword → returns error string."""
+        mock_fetch.return_value = [
+            {'id': 10, 'name': 'TERM-OTHER COMPANY-CC-PREFIX:NONE'},
+        ]
+        result = jerasoft.find_best_term_table(
+            target_query='CITIC TELECOM',
+            subject='[CITIC TELECOM] [PRM] [NONE] [USD]',
+            prefix_code='NONE',
+        )
+        self.assertIsInstance(result[0], str)
+        self.assertIn('No TERM* tables found', result[0])
+
+    @patch('jerasoft.fetch_all_tables')
+    def test_find_best_term_table_prefix_narrows_to_one(self, mock_fetch):
+        """Multiple tables match company, but prefix filter narrows to 1 → success."""
+        mock_fetch.return_value = [
+            {'id': 10, 'name': 'TERM-CITIC TELECOM-CC-PREFIX:8540'},
+            {'id': 20, 'name': 'TERM-CITIC TELECOM-CC-PREFIX:9899'},
+        ]
+        table_id, best_table, top_scored = jerasoft.find_best_term_table(
+            target_query='CITIC TELECOM',
+            subject='[CITIC TELECOM] [PRM] [9899] [USD]',
+            prefix_code='9899',
+        )
+        self.assertEqual(table_id, 20)
+        self.assertEqual(best_table['name'], 'TERM-CITIC TELECOM-CC-PREFIX:9899')
+
+
+    # --- Trunk alias + trunk-filter tests ---
+
+    def test_canonicalize_trunk_aliases(self):
+        self.assertEqual(jerasoft.canonicalize_trunk('silver'), 'PRM')
+        self.assertEqual(jerasoft.canonicalize_trunk('PREMIUM'), 'PRM')
+        self.assertEqual(jerasoft.canonicalize_trunk('gold'), 'STD')
+        self.assertEqual(jerasoft.canonicalize_trunk('wholesale'), 'STD')
+        self.assertEqual(jerasoft.canonicalize_trunk('CC'), 'CC')
+        # Unknown values fall through as upper-cased literal
+        self.assertEqual(jerasoft.canonicalize_trunk('xyz'), 'XYZ')
+        self.assertIsNone(jerasoft.canonicalize_trunk(''))
+        self.assertIsNone(jerasoft.canonicalize_trunk(None))
+
+    def test_table_matches_trunk_whole_word_and_alias(self):
+        # Whole-word match (should NOT match inside 'PRIMARY')
+        self.assertFalse(jerasoft.table_matches_trunk('TERM FOO PRIMARY PREFIX:1', 'PRM'))
+        # Alias match: subject says PRM, table says SILVER
+        self.assertTrue(jerasoft.table_matches_trunk('TERM FOO SILVER PREFIX:1', 'PRM'))
+        # Direct-canonical match
+        self.assertTrue(jerasoft.table_matches_trunk('TERM-FOO-CC-PREFIX:NONE', 'CC'))
+        # STD alias: gold/wholesale/standard
+        self.assertTrue(jerasoft.table_matches_trunk('TERM FOO GOLD PREFIX:9', 'STD'))
+        self.assertTrue(jerasoft.table_matches_trunk('TERM FOO WHOLESALE PREFIX:9', 'STD'))
+
+    @patch('jerasoft.fetch_all_tables')
+    def test_trunk_filter_narrows_prefix_tie_to_one(self, mock_fetch):
+        """company+prefix leaves 2; trunk filter narrows to 1 → success."""
+        mock_fetch.return_value = [
+            {'id': 10, 'name': 'TERM-CITIC TELECOM-CC-PREFIX:NONE'},
+            {'id': 20, 'name': 'TERM-CITIC TELECOM-STANDARD-PREFIX:NONE'},
+        ]
+        table_id, best_table, _ = jerasoft.find_best_term_table(
+            target_query='CITIC TELECOM',
+            subject='[CITIC TELECOM] [CC] [NONE] [USD]',
+            prefix_code='NONE',
+            trunk_code='CC',
+        )
+        self.assertEqual(table_id, 10)
+        self.assertIn('CC', best_table['name'])
+
+    @patch('jerasoft.fetch_all_tables')
+    def test_trunk_filter_zero_matches_returns_error(self, mock_fetch):
+        """company+prefix leaves 2; trunk matches 0 → error."""
+        mock_fetch.return_value = [
+            {'id': 10, 'name': 'TERM-CITIC TELECOM-CC-PREFIX:NONE'},
+            {'id': 20, 'name': 'TERM-CITIC TELECOM-STANDARD-PREFIX:NONE'},
+        ]
+        result = jerasoft.find_best_term_table(
+            target_query='CITIC TELECOM',
+            subject='[CITIC TELECOM] [ORTP] [NONE] [USD]',
+            prefix_code='NONE',
+            trunk_code='ORTP',
+        )
+        self.assertIsInstance(result[0], str)
+        self.assertIn("trunk 'ORTP'", result[0])
+        self.assertEqual(result[1], '')
+        self.assertEqual(result[2], '')
+
+    @patch('jerasoft.fetch_all_tables')
+    def test_trunk_filter_multiple_matches_returns_error(self, mock_fetch):
+        """company+prefix leaves ≥2; trunk filter still leaves ≥2 → error."""
+        mock_fetch.return_value = [
+            {'id': 10, 'name': 'TERM-CITIC TELECOM-CC-PREFIX:NONE'},
+            {'id': 20, 'name': 'TERM-CITIC TELECOM ASIA-CC-PREFIX:NONE'},
+        ]
+        result = jerasoft.find_best_term_table(
+            target_query='CITIC TELECOM',
+            subject='[CITIC TELECOM] [CC] [NONE] [USD]',
+            prefix_code='NONE',
+            trunk_code='CC',
+        )
+        self.assertIsInstance(result[0], str)
+        self.assertIn('company+prefix+trunk', result[0])
+
+    @patch('jerasoft.fetch_all_tables')
+    def test_trunk_filter_alias_matches_via_silver(self, mock_fetch):
+        """Subject trunk PRM should match table containing SILVER via alias."""
+        mock_fetch.return_value = [
+            {'id': 30, 'name': 'TERM-CITIC TELECOM-SILVER-PREFIX:NONE'},
+            {'id': 40, 'name': 'TERM-CITIC TELECOM-STANDARD-PREFIX:NONE'},
+        ]
+        table_id, best_table, _ = jerasoft.find_best_term_table(
+            target_query='CITIC TELECOM',
+            subject='[CITIC TELECOM] [PRM] [NONE] [USD]',
+            prefix_code='NONE',
+            trunk_code='PRM',
+        )
+        self.assertEqual(table_id, 30)
+        self.assertIn('SILVER', best_table['name'])
+
+
 if __name__ == '__main__':
     unittest.main()

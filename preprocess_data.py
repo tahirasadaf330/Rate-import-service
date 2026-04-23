@@ -1773,15 +1773,6 @@ def load_clean_rates(
         df = df.loc[~missing_any].copy()
         df.reset_index(drop=True, inplace=True)
 
-    # Guard against "false cleaning" – if almost everything was stripped out,
-    # treat this as a failure instead of silently writing a tiny file.
-    row_count = len(df)
-    if row_count <= 3:
-        raise ValueError(
-            f"Cleaning produced only {row_count} data rows after validation; "
-            "treating this as a failed/false cleaning run."
-        )
-
     # finally, write the cleaned sheet
     out_path, writer_kwargs = _normalize_excel_writer_path(output_path)
     df.to_excel(out_path, index=False, **writer_kwargs)

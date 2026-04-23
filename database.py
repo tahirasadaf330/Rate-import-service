@@ -1641,6 +1641,28 @@ def find_invalid_subject_detail(invalid_subject_id: int, subject: str) -> Option
         return None
 
 
+def find_approved_jera_table_for_subject(email: str, subject: str) -> Optional[str]:
+    """
+    Read-only lookup: return an admin-approved jera_table for this (email, subject),
+    or None if no approval exists. Does not create any rows.
+    """
+    if not email or not subject:
+        return None
+    sql = """
+        SELECT isd.jera_table
+          FROM invalid_subject_details isd
+          JOIN invalid_subjects       isub ON isd.invalid_subject_id = isub.id
+         WHERE isub.email = %s
+           AND isd.subject = %s
+           AND isd.jera_table IS NOT NULL
+         LIMIT 1
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (email, subject))
+        row = cur.fetchone()
+        return (row[0] if row and row[0] else None)
+
+
 # ─────────────────────── JERASOFT UPLOAD CONTROL ───────────────────────
 
 def set_jera_upload_flag(rate_upload_id: int, is_rate_approved_by_admin: bool, jera_table_id: Optional[int] = None) -> None:
@@ -1965,6 +1987,7 @@ def auto_update_status_on_import_flag_change():
 # ─────────────────────── Vendor/day pending-upload gating ───────────────────────
 
 WAITING_PREVIOUS_VENDOR_PENDING = "waiting: previous JeraSoft upload for this vendor today is still pending"
+WAITING_JERA_TABLE_FOR_SUBJECT = "waiting for jera table for this subject"
 
 def vendor_has_pending_jera_upload_today(
     *,

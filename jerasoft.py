@@ -86,6 +86,42 @@ def table_has_prefix(name: str, prefix_code: str) -> bool:
     tp = table_prefix_from_name(name)
     return tp == normalize_prefix(prefix_code)
 
+# ----- Trunk matching (aliases + whole-word match in table name) -----
+TRUNK_ALIASES: Dict[str, List[str]] = {
+    "STD":     ["std", "standard", "gold", "wholesale"],
+    "PRM":     ["prm", "premium", "silver", "prs"],
+    "CC":      ["cc", "call center"],
+    "ORTP":    ["ortp"],
+    "TDM":     ["tdm"],
+    "DID":     ["did"],
+    "SPECIAL": ["special"],
+    "ATX":     ["atx"],
+}
+
+def canonicalize_trunk(trunk: Optional[str]) -> Optional[str]:
+    if not trunk:
+        return None
+    key = str(trunk).strip().lower()
+    if not key:
+        return None
+    for canonical, aliases in TRUNK_ALIASES.items():
+        if key in (a.lower() for a in aliases):
+            return canonical
+    return str(trunk).strip().upper()
+
+def table_matches_trunk(name: str, trunk: str) -> bool:
+    """True if table name contains the trunk (or any alias) as a whole word."""
+    canonical = canonicalize_trunk(trunk)
+    if not canonical:
+        return False
+    aliases = TRUNK_ALIASES.get(canonical, [canonical.lower()])
+    hay = (name or "").lower()
+    for alias in aliases:
+        pat = r"(?<![A-Za-z0-9])" + re.escape(alias.lower()) + r"(?![A-Za-z0-9])"
+        if re.search(pat, hay):
+            return True
+    return False
+
 #_____________________________________________________________________________________
 
 # -------------------------------------------------------------------
@@ -168,7 +204,8 @@ def find_best_term_table(
     api_url: Optional[str] = None,
     api_key: Optional[str] = None,
     top_k: int = 5,
-    prefix_code: Optional[str] = None,   # <--- NEW
+    prefix_code: Optional[str] = None,
+    trunk_code: Optional[str] = None,
 ) -> Tuple[int, Dict, List[Tuple[float, Dict]]]:
 
     if not target_query:
@@ -195,24 +232,44 @@ def find_best_term_table(
                     "", "")
         candidates = exact_prefix
 
-    # Score, with small tie-break boost for explicit prefix match (in case of duplicates)
-    scored: List[Tuple[float, Dict]] = []
-    for t in candidates:
-        name = t.get("name", "")
-        score = fuzzy_score(name, subject)
-        if norm_pref:
-            tp = table_prefix_from_name(name)
-            if tp == norm_pref:
-                score += 0.25  # gentle nudge for deterministic ordering
-        scored.append((score, t))
+    # If still ambiguous after company+prefix, narrow down using the trunk filter
+    if len(candidates) >= 2 and trunk_code:
+        trunk_filtered = [t for t in candidates if table_matches_trunk(t.get("name", ""), trunk_code)]
+        if len(trunk_filtered) == 1:
+            candidates = trunk_filtered
+        elif len(trunk_filtered) == 0:
+            return (
+                f"No TERM* tables found for company '{company_kw}' "
+                f"with PREFIX:{norm_pref or 'ANY'} and trunk '{trunk_code}'.",
+                "",
+                "",
+            )
+        else:
+            table_names = [t.get("name", "") for t in trunk_filtered]
+            return (
+                f"Multiple tables found after company+prefix+trunk filtering — "
+                f"please assign a table manually. Tables: {table_names}",
+                "",
+                "",
+            )
 
-    scored.sort(key=lambda x: x[0], reverse=True)
-    best_score, best_table = scored[0]
+    # Safety net: still >1 (e.g. trunk not supplied, or trunk alias matches many)
+    if len(candidates) > 1:
+        table_names = [t.get("name", "") for t in candidates]
+        return (
+            f"Multiple tables found after filtering — please refine your input. "
+            f"Tables: {table_names}",
+            "",
+            "",
+        )
+
+    best_table = candidates[0]
     best_id = best_table.get("id")
     if best_id is None:
         raise KeyError("Best table did not include an 'id' field")
 
-    return int(best_id), best_table, scored[:top_k]
+    # Return with score 1.0 since it's the only match
+    return int(best_id), best_table, [(1.0, best_table)]
 def get_table_id_by_name(
     table_name: str,
     api_url: Optional[str] = None,
@@ -370,6 +427,7 @@ def export_rates_by_query(
     output_path: str,
     subject: str,
     prefix_code: Optional[str] = None,
+    trunk_code: Optional[str] = None,
     *,
     api_url: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -387,7 +445,7 @@ def export_rates_by_query(
     else:
         table_id, best_table, top_scored = find_best_term_table(
             target_query=target_query, api_url=api_url, api_key=api_key,
-            subject=subject, prefix_code=prefix_code
+            subject=subject, prefix_code=prefix_code, trunk_code=trunk_code,
         )
         if best_table == "" and top_scored == "":
             return table_id  # string error from find_best_term_table

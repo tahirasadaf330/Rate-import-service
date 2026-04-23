@@ -23,7 +23,12 @@ from database import (
     vendor_has_pending_jera_upload_today,
     set_processing_status_text,
     WAITING_PREVIOUS_VENDOR_PENDING,
+    WAITING_JERA_TABLE_FOR_SUBJECT,
     get_processing_status,
+    get_or_create_invalid_subject,
+    insert_invalid_subject_detail,
+    find_invalid_subject_detail,
+    find_approved_jera_table_for_subject,
 )
 from jerasoft import export_rates_by_query, get_table_id_by_name, fetch_active_current_future_rates, save_rates_to_excel
 
@@ -139,6 +144,66 @@ def _derive_trunk(meta: Dict[str, Any]) -> Optional[str]:
         return m.group(1).strip()
 
     return None
+
+def _mark_subject_invalid_pending_jera(
+    folder: Path,
+    meta: Dict[str, Any],
+    error_message: str,
+) -> None:
+    """
+    Route a valid-but-ambiguous subject (JERA lookup returned 0 or >=2 tables)
+    into invalid_subjects / invalid_subject_details so an admin can assign a
+    JeraSoft table manually. Also flips processing_statuses to a waiting text
+    and flags the folder's metadata so it short-circuits on future runs.
+    """
+    try:
+        from email_verification import _strip_date_time_tokens_for_invalid_subject
+    except Exception:
+        _strip_date_time_tokens_for_invalid_subject = None  # type: ignore[assignment]
+
+    sender = str(meta.get("sender") or "").strip()
+    subject = str(meta.get("subject") or "").strip()
+    subject_key = subject
+    if _strip_date_time_tokens_for_invalid_subject:
+        try:
+            subject_key = _strip_date_time_tokens_for_invalid_subject(subject)
+        except Exception:
+            subject_key = subject
+
+    try:
+        rcvd_dt = None
+        raw = meta.get("receivedDateTime_raw")
+        if isinstance(raw, str) and raw.strip():
+            try:
+                rcvd_dt = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+            except Exception:
+                rcvd_dt = None
+
+        parent_id = get_or_create_invalid_subject(
+            email=sender or "",
+            received_at=rcvd_dt,
+            processed_at=datetime.now(timezone.utc),
+            status="pending",
+        )
+        found = find_invalid_subject_detail(parent_id, subject_key)
+        if not found:
+            insert_invalid_subject_detail(parent_id, subject_key, None)
+    except Exception as e:
+        print(f"[{folder.name}] warn: failed to record invalid_subject for JERA ambiguity: {e}")
+
+    meta["jera_fetched"] = False
+    meta["keyword_error"] = error_message
+    meta["waiting_for_jera_table"] = True
+    save_metadata(folder, meta)
+
+    try:
+        set_processing_status_text(
+            directory_name=folder.name,
+            status_text=WAITING_JERA_TABLE_FOR_SUBJECT,
+        )
+    except Exception as e:
+        print(f"[{folder.name}] warn: failed to set waiting status: {e}")
+
 
 def load_metadata(folder: Path) -> Optional[Dict[str, Any]]:
     meta = folder / "metadata.json"
@@ -586,14 +651,46 @@ def process_one_folder(folder: Path) -> str:
         pass
 
     # -------- 1) JeraSoft export (if needed) --------
-    
+
     if not bool(meta.get("jerasoft_preprocessed")):
         company     = (meta.get("company") or "").strip()
         subject     = (meta.get("subject") or "").strip()
         prefix      = _derive_prefix(meta)
+        trunk       = _derive_trunk(meta)
         dir_path    = meta.get("directory")
         attachments = meta.get("attachments", [])
         force_table = (meta.get("force_jerasoft_table_name") or "").strip()
+
+        # Proactive check: before running the JERA lookup, see if this exact subject
+        # already has an admin-approved table in invalid_subject_details. This covers
+        # both (a) folders we previously flagged as waiting, and (b) brand-new emails
+        # whose subject has been approved once before by the admin — no extra tick.
+        if not force_table and subject:
+            try:
+                from email_verification import _strip_date_time_tokens_for_invalid_subject
+                sender = str(meta.get("sender") or "").strip()
+                subject_key = _strip_date_time_tokens_for_invalid_subject(subject)
+                approved = find_approved_jera_table_for_subject(sender, subject_key)
+                if approved:
+                    force_table = approved.strip()
+                    meta["force_jerasoft_table_name"] = force_table
+                    meta["waiting_for_jera_table"] = False
+                    save_metadata(folder, meta)
+                    print(f"[{folder.name}] reused approved JERA table: {force_table}")
+            except Exception as e:
+                print(f"[{folder.name}] warn: approved-table lookup failed: {e}")
+
+        # If we previously flagged this folder as waiting and no approval was found
+        # in the proactive check above, keep waiting.
+        if not force_table and bool(meta.get("waiting_for_jera_table")):
+            try:
+                set_processing_status_text(
+                    directory_name=folder.name,
+                    status_text=WAITING_JERA_TABLE_FOR_SUBJECT,
+                )
+            except Exception:
+                pass
+            return f"[{folder.name}] skip: {WAITING_JERA_TABLE_FOR_SUBJECT}"
 
         if not dir_path or not attachments:
             return f"[{folder.name}] skip: missing directory/attachments info"
@@ -632,25 +729,13 @@ def process_one_folder(folder: Path) -> str:
                     output_path=output_path,
                     subject=subject,
                     prefix_code=prefix,
+                    trunk_code=trunk,
                 )
                 if isinstance(info, str):
-                    # export_rates_by_query returns a string on error
-                    meta["keyword_error"] = info
-                    meta["jera_fetched"] = False  # Mark JeraSoft fetch as failed in metadata
-                    save_metadata(folder, meta)
-                    
-                    # Update processing_statuses to mark jera_fetched as failed
-                    try:
-                        mark_processing_stage(
-                            directory_name=folder.name,
-                            stage="jera_fetched",
-                            final_status=False,
-                            error_message=info,
-                        )
-                    except Exception as db_error:
-                        print(f"[{folder.name}] stage warn (jera_fetched failed): {db_error}")
-                    
-                    return f"[{folder.name}] export error: {info}"
+                    # export_rates_by_query returns a string on error.
+                    # Route to invalid_subjects so an admin can assign a table manually.
+                    _mark_subject_invalid_pending_jera(folder, meta, info)
+                    return f"[{folder.name}] waiting for manual JERA table: {info}"
 
                 # read back the file for row count
                 rows_js = 0

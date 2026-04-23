@@ -16,7 +16,7 @@ Optional:
   VERBOSE=1  # to print decoded token roles
 """
 
-import os, sys, re, json, base64, time, unicodedata
+import os, sys, re, json, base64, time, unicodedata, hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Set, Tuple, Optional, List, Dict
@@ -972,7 +972,9 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
             date_only = dt.astimezone(timezone.utc).strftime('%Y-%m-%d')
             time_only = dt.astimezone(timezone.utc).strftime('%H:%M:%S')
             safe_sender = sender.replace('@', '_at_')
-            save_dir = os.path.join(attachments_base, f"{safe_sender}_{date_time_str}")
+            # Append MD5 hash (first 8 chars) of internetMessageId for uniqueness
+            msg_id_hash = hashlib.md5((internet_msg_id or msg_id or "").encode()).hexdigest()[:8]
+            save_dir = os.path.join(attachments_base, f"{safe_sender}_{date_time_str}_{msg_id_hash}")
             print("  save_dir:", save_dir)
 
             # Idempotency: if this exact message-dir already exists, skip
