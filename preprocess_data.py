@@ -1041,7 +1041,10 @@ def _normalize_dst_code_fragment(value: object) -> str:
         return ""
     if re.fullmatch(r"\d+\.0+", s):
         return s.split(".", 1)[0]
-    return re.sub(r"\D+", "", s)
+    # Keep digits AND the separators the downstream splitter relies on
+    # (`,` and `;` for multi-code cells, `-` for ranges). Stripping commas
+    # here was collapsing "9320, 9330, 9340" into "932093309340".
+    return re.sub(r"[^0-9,;\-]", "", s)
 
 
 def _merge_vendor_special_mapping(
@@ -1053,6 +1056,7 @@ def _merge_vendor_special_mapping(
         pieces = [df[col].map(_normalize_dst_code_fragment) for col in source_cols]
 
         def _merge_dst(row: tuple[str, ...]) -> str:
+            # Concatenate fragments (e.g. Country Code "92" + Area Code "44" = "9244").
             return "".join(part for part in row if part)
 
         return pd.Series(list(map(_merge_dst, zip(*pieces))), index=df.index, dtype="object")
