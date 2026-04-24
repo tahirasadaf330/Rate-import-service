@@ -349,6 +349,16 @@ def _raw_from_ws(ws) -> pd.DataFrame:
     # Keep a reasonable empty-row streak break to avoid trailing empties in very large sheets.
     empty_row_limit = 500  # Stop if 500 consecutive empty rows (acts near end-of-data)
     empty_count = 0
+    # Some Excel producers write a stale <dimension> tag in the sheet XML
+    # (e.g. A1:F1019 on a sheet that really has 5000+ rows). In read_only
+    # mode openpyxl trusts that tag and iter_rows stops early, silently
+    # dropping data. Discarding the cached range forces a full scan.
+    reset = getattr(ws, "reset_dimensions", None)
+    if callable(reset):
+        try:
+            reset()
+        except Exception:
+            pass
     for row in ws.iter_rows(values_only=False):
         out = []
         for c in row:
@@ -1783,7 +1793,7 @@ def load_clean_rates(
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/HAYO_Dialing_Codes_And_Prefix_CLI.xlsx"
+    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/CPL_033_HAYO_ORTP_033-20260423-153300.xlsx"
     OUT_PATH = "C:/Users/Tahira Sadaf/Documents/attachments/cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 
