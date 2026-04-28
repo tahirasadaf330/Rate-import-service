@@ -1123,16 +1123,52 @@ def _apply_vendor_header_mapping(df: pd.DataFrame, field_mappings: list[dict[str
 
     df = df.rename(columns=rename_map)
 
+    # Multi-source canonicals: tag with "__N" suffix in mapping order. The
+    # actual concat + cell cleaning happens later in the preprocessing
+    # pipeline via _merge_vendor_canonical_columns(), so this function stays
+    # a pure rename.
+    suffix_rename: Dict[str, str] = {}
     for canonical_name in ("Dst Code", "Billing Increment"):
         source_cols = target_sources.get(canonical_name) or []
-        if not source_cols:
-            continue
-        merged = _merge_vendor_special_mapping(df, canonical_name, source_cols)
-        df = _replace_columns_with_series(df, source_cols, canonical_name, merged)
+        for idx, col in enumerate(source_cols, start=1):
+            suffix_rename[col] = f"{canonical_name}__{idx}"
+    if suffix_rename:
+        df = df.rename(columns=suffix_rename)
 
-    missing = [col for col in REQUIRED_COLS if col not in df.columns]
+    def _is_present(name: str) -> bool:
+        if name in df.columns:
+            return True
+        return any(str(c).startswith(f"{name}__") for c in df.columns)
+
+    missing = [col for col in REQUIRED_COLS if not _is_present(col)]
     if missing:
         raise ValueError(f"Missing required canonical columns from vendor header mapping: {missing}")
+
+    return df
+
+
+_VENDOR_CANONICAL_SUFFIX_RE = re.compile(r"^(?P<base>.+)__(?P<idx>\d+)$")
+
+
+def _merge_vendor_canonical_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Collapse "{canonical}__1", "{canonical}__2", ... columns produced by
+    _apply_vendor_header_mapping into a single "{canonical}" column. Per-cell
+    cleaning (Excel ".0" rescue, separator preservation) runs here, before
+    concat. Suffixed source columns are dropped.
+    """
+    groups: Dict[str, list[tuple[int, str]]] = {}
+    for col in df.columns:
+        m = _VENDOR_CANONICAL_SUFFIX_RE.match(str(col))
+        if not m:
+            continue
+        groups.setdefault(m.group("base"), []).append((int(m.group("idx")), col))
+
+    for canonical_name, items in groups.items():
+        items.sort(key=lambda t: t[0])
+        source_cols = [c for _, c in items]
+        merged = _merge_vendor_special_mapping(df, canonical_name, source_cols)
+        df = _replace_columns_with_series(df, source_cols, canonical_name, merged)
 
     return df
 
@@ -1692,6 +1728,7 @@ def load_clean_rates(
     # 4) canonicalize & trim
     if vendor_header_mapping:
         df = _apply_vendor_header_mapping(df, vendor_header_mapping.get("field_mappings") or [])
+        df = _merge_vendor_canonical_columns(df)
     else:
         df = _canonicalize_headers(df)
     df = _synthesize_billing_increment(df)
