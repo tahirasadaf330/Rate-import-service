@@ -157,19 +157,19 @@ def _strip_date_time_tokens_for_invalid_subject(subj: str) -> str:
     # Normalize separators similar to _normalize_subject, but KEEP ':' so time like "14:04"
     # can be stripped before we collapse punctuation.
     subj = unicodedata.normalize("NFKC", str(subj))
-    subj = re.sub(r"[;|,/\\]+", " ", subj)
-    subj = re.sub(r"\s+", " ", subj).strip()
 
-    # Strip tracking IDs like "[TID:4445188]" so that subjects which differ
-    # only by a TID value map to the same invalid-subject key.
-    subj = re.sub(r"\[\s*TID\s*:\s*\d+\s*\]", "", subj, flags=re.IGNORECASE)
+    # Strip slash-form dates BEFORE '/' is collapsed to space below.
+    # (Dash/dot forms are stripped further down; this only covers '/'.)
+    # 4-digit year
+    subj = re.sub(r"\b(?:19|20)\d{2}/(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])\b", "", subj)
+    subj = re.sub(r"\b(?:0?[1-9]|[12]\d|3[01])/(?:0?[1-9]|1[0-2])/(?:19|20)\d{2}\b", "", subj)
+    subj = re.sub(r"\b(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])/(?:19|20)\d{2}\b", "", subj)
+    # 2-digit year
+    subj = re.sub(r"\b(?:0?[1-9]|[12]\d|3[01])/(?:0?[1-9]|1[0-2])/\d{2}\b", "", subj)
+    subj = re.sub(r"\b(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])/\d{2}\b", "", subj)
 
-    # Remove time tokens
-    subj = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", "", subj)  # HH:MM or HH:MM:SS
-    subj = re.sub(r"\b\d{6}\b", "", subj)  # HHMMSS
-    subj = re.sub(r"\b(?:am|pm)\b", "", subj, flags=re.IGNORECASE)
-
-    # Remove ISO-8601 datetimes (covers most cases)
+    # Remove ISO-8601 datetimes BEFORE the standalone time regex below — otherwise
+    # the time regex would strip the inner "MM:SS" of "T13:16:45" and break the match.
     subj = re.sub(
         r"\b(?:19|20)\d{2}[-/\.](?:0?[1-9]|1[0-2])[-/\.](?:0?[1-9]|[12]\d|3[01])"
         r"(?:[T\s]"
@@ -182,6 +182,18 @@ def _strip_date_time_tokens_for_invalid_subject(subj: str) -> str:
         subj,
         flags=re.IGNORECASE,
     )
+
+    subj = re.sub(r"[;|,/\\]+", " ", subj)
+    subj = re.sub(r"\s+", " ", subj).strip()
+
+    # Strip tracking IDs like "[TID:4445188]" so that subjects which differ
+    # only by a TID value map to the same invalid-subject key.
+    subj = re.sub(r"\[\s*TID\s*:\s*\d+\s*\]", "", subj, flags=re.IGNORECASE)
+
+    # Remove time tokens
+    subj = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", "", subj)  # HH:MM or HH:MM:SS
+    subj = re.sub(r"\b\d{6}\b", "", subj)  # HHMMSS
+    subj = re.sub(r"\b(?:am|pm)\b", "", subj, flags=re.IGNORECASE)
 
     # Drop common timezone offset tokens if they appear alone
     # (use whitespace-boundaries, not \b, because '+'/'-' are non-word chars)
@@ -205,6 +217,9 @@ def _strip_date_time_tokens_for_invalid_subject(subj: str) -> str:
     subj = re.sub(r"\b(?:0?[1-9]|[12]\d|3[01])[-/.](?:0?[1-9]|1[0-2])[-/.](?:19|20)\d{2}\b", "", subj)
     # - MM-DD-YYYY, M/D/YYYY, MM.DD.YYYY (US-style)
     subj = re.sub(r"\b(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])[-/.](?:19|20)\d{2}\b", "", subj)
+    # - 2-digit year forms with - or . separator (slash variants handled at top)
+    subj = re.sub(r"\b(?:0?[1-9]|[12]\d|3[01])[-.](?:0?[1-9]|1[0-2])[-.]\d{2}\b", "", subj)
+    subj = re.sub(r"\b(?:0?[1-9]|1[0-2])[-.](?:0?[1-9]|[12]\d|3[01])[-.]\d{2}\b", "", subj)
     # - compact yyyymmdd (very common in filenames)
     subj = re.sub(r"\b(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\b", "", subj)
     # - spaced variants after normalization: YYYY M D or D M YYYY
