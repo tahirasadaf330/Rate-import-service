@@ -203,6 +203,8 @@ def _strip_date_time_tokens_for_invalid_subject(subj: str) -> str:
     subj = re.sub(r"\b(?:19|20)\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])\b", "", subj)
     # - DD-MM-YYYY, D/M/YYYY, DD.MM.YYYY
     subj = re.sub(r"\b(?:0?[1-9]|[12]\d|3[01])[-/.](?:0?[1-9]|1[0-2])[-/.](?:19|20)\d{2}\b", "", subj)
+    # - MM-DD-YYYY, M/D/YYYY, MM.DD.YYYY (US-style)
+    subj = re.sub(r"\b(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])[-/.](?:19|20)\d{2}\b", "", subj)
     # - compact yyyymmdd (very common in filenames)
     subj = re.sub(r"\b(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\b", "", subj)
     # - spaced variants after normalization: YYYY M D or D M YYYY
