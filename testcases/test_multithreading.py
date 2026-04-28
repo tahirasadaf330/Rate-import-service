@@ -339,14 +339,125 @@ class TestMultithreading(unittest.TestCase):
 
         with patch("multithreading.fetch_vendor_context_by_sender_email", return_value={"vendor_id": 7, "vendor_date_format": "MM-DD-YYYY"}), \
              patch("multithreading.export_rates_by_query", return_value="boom"), \
-             patch("multithreading.mark_processing_stage", return_value=None):
+             patch("multithreading.mark_processing_stage", return_value=None), \
+             patch("multithreading.find_approved_jera_table_for_subject", return_value=None), \
+             patch("multithreading.get_or_create_invalid_subject", return_value=1), \
+             patch("multithreading.find_invalid_subject_detail", return_value=None), \
+             patch("multithreading.insert_invalid_subject_detail", return_value=1):
             msg = process_one_folder(self.test_dir)
 
-        self.assertIn("export error", msg)
+        # JERA lookup failures now route the subject to invalid_subjects and wait.
+        self.assertIn("waiting for manual JERA table", msg)
         meta2 = load_metadata(self.test_dir)
         self.assertEqual(meta2.get("date_format_identified"), "MM-DD-YYYY")
         self.assertTrue(bool(meta2.get("date_verification_ingestion_status")))
         self.assertEqual(meta2.get("vendor_id"), 7)
+        self.assertTrue(bool(meta2.get("waiting_for_jera_table")))
+        self.assertFalse(bool(meta2.get("jera_fetched")))
+
+    def test_jera_error_routes_subject_to_invalid_subjects(self):
+        """Ambiguous/missing JERA match should call invalid_subjects helpers and set waiting status."""
+        meta = load_metadata(self.test_dir)
+        meta["date_verification_ingestion_status"] = True
+        meta["date_format_identified"] = "YYYY-MM-DD"
+        meta["jerasoft_preprocessed"] = False
+        meta["attachments"] = ["dummy.xlsx"]
+        meta["directory"] = str(self.test_dir)
+        meta["sender"] = "vendor@example.com"
+        meta["subject"] = "[ACME] [PRM] [1001] [USD]"
+        meta["receivedDateTime_raw"] = "2026-04-23T10:00:00Z"
+        save_metadata(self.test_dir, meta)
+        (self.test_dir / "dummy.xlsx").write_bytes(b"")
+
+        err_msg = "Multiple tables found after company+prefix+trunk filtering"
+        with patch("multithreading.export_rates_by_query", return_value=err_msg), \
+             patch("multithreading.mark_processing_stage", return_value=None), \
+             patch("multithreading.find_approved_jera_table_for_subject", return_value=None), \
+             patch("multithreading.get_or_create_invalid_subject", return_value=42) as mock_parent, \
+             patch("multithreading.find_invalid_subject_detail", return_value=None) as mock_find, \
+             patch("multithreading.insert_invalid_subject_detail", return_value=7) as mock_ins, \
+             patch("multithreading.set_processing_status_text", return_value=1) as mock_status:
+            msg = process_one_folder(self.test_dir)
+
+        self.assertIn("waiting for manual JERA table", msg)
+        mock_parent.assert_called_once()
+        mock_find.assert_called_once()
+        mock_ins.assert_called_once()
+        # Status text should equal the new waiting constant
+        from database import WAITING_JERA_TABLE_FOR_SUBJECT
+        called_with_waiting = any(
+            call.kwargs.get("status_text") == WAITING_JERA_TABLE_FOR_SUBJECT
+            for call in mock_status.call_args_list
+        )
+        self.assertTrue(called_with_waiting)
+        meta2 = load_metadata(self.test_dir)
+        self.assertTrue(bool(meta2.get("waiting_for_jera_table")))
+        self.assertEqual(meta2.get("keyword_error"), err_msg)
+
+    def test_proactive_pickup_skips_jera_lookup_when_subject_previously_approved(self):
+        """Fresh folder, never flagged waiting, but subject was approved once before → use that table directly."""
+        meta = load_metadata(self.test_dir)
+        meta["date_verification_ingestion_status"] = True
+        meta["date_format_identified"] = "YYYY-MM-DD"
+        meta["jerasoft_preprocessed"] = False
+        meta["attachments"] = ["dummy.xlsx"]
+        meta["directory"] = str(self.test_dir)
+        meta["sender"] = "vendor@example.com"
+        meta["subject"] = "[ACME] [PRM] [1001] [USD]"
+        # Note: no waiting_for_jera_table flag — this is a brand-new folder
+        save_metadata(self.test_dir, meta)
+        (self.test_dir / "dummy.xlsx").write_bytes(b"")
+
+        approved_table = "TERM ACME PRM PREFIX:1001 USD"
+
+        with patch("multithreading.find_approved_jera_table_for_subject", return_value=approved_table) as mock_lookup, \
+             patch("multithreading.export_rates_by_query") as mock_export, \
+             patch("multithreading.get_table_id_by_name", return_value=99), \
+             patch("multithreading.fetch_active_current_future_rates", return_value=pd.DataFrame({"Dst Code": ["1"], "Rate": [0.1]})), \
+             patch("multithreading.save_rates_to_excel", return_value=str(self.test_dir / "out.xlsx")), \
+             patch("multithreading.mark_processing_stage", return_value=None), \
+             patch("pandas.read_excel", return_value=pd.DataFrame({"Dst Code": ["1"], "Rate": [0.1]})):
+            process_one_folder(self.test_dir)
+
+        # JERA lookup (export_rates_by_query) must NOT be called — we short-circuited to force_table path.
+        mock_export.assert_not_called()
+        mock_lookup.assert_called_once()
+        meta2 = load_metadata(self.test_dir)
+        self.assertEqual(meta2.get("force_jerasoft_table_name"), approved_table)
+        self.assertEqual(meta2.get("best_table_name"), approved_table)
+        self.assertEqual(meta2.get("table_id"), 99)
+
+    def test_waiting_folder_picks_up_admin_approved_table(self):
+        """On a rerun, waiting folder should pick up approved jera_table and clear waiting flag."""
+        meta = load_metadata(self.test_dir)
+        meta["date_verification_ingestion_status"] = True
+        meta["date_format_identified"] = "YYYY-MM-DD"
+        meta["jerasoft_preprocessed"] = False
+        meta["attachments"] = ["dummy.xlsx"]
+        meta["directory"] = str(self.test_dir)
+        meta["sender"] = "vendor@example.com"
+        meta["subject"] = "[ACME] [PRM] [1001] [USD]"
+        meta["waiting_for_jera_table"] = True
+        save_metadata(self.test_dir, meta)
+        (self.test_dir / "dummy.xlsx").write_bytes(b"")
+
+        approved_table = "TERM ACME PRM PREFIX:1001 USD"
+
+        with patch("multithreading.find_approved_jera_table_for_subject", return_value=approved_table), \
+             patch("multithreading.get_table_id_by_name", return_value=99), \
+             patch("multithreading.fetch_active_current_future_rates", return_value=pd.DataFrame({"Dst Code": ["1"], "Rate": [0.1]})), \
+             patch("multithreading.save_rates_to_excel", return_value=str(self.test_dir / "out.xlsx")), \
+             patch("multithreading.mark_processing_stage", return_value=None), \
+             patch("pandas.read_excel", return_value=pd.DataFrame({"Dst Code": ["1"], "Rate": [0.1]})):
+            msg = process_one_folder(self.test_dir)
+
+        # Should not return the waiting-skip message anymore
+        self.assertNotIn("waiting for jera table", msg.lower())
+        meta2 = load_metadata(self.test_dir)
+        self.assertFalse(bool(meta2.get("waiting_for_jera_table")))
+        self.assertEqual(meta2.get("force_jerasoft_table_name"), approved_table)
+        self.assertEqual(meta2.get("best_table_name"), approved_table)
+        self.assertEqual(meta2.get("table_id"), 99)
 
     def test_cleaning_uses_db_format_over_metadata(self):
         # approved folder, but metadata has a different date_format than DB

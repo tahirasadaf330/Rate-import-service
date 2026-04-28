@@ -349,6 +349,16 @@ def _raw_from_ws(ws) -> pd.DataFrame:
     # Keep a reasonable empty-row streak break to avoid trailing empties in very large sheets.
     empty_row_limit = 500  # Stop if 500 consecutive empty rows (acts near end-of-data)
     empty_count = 0
+    # Some Excel producers write a stale <dimension> tag in the sheet XML
+    # (e.g. A1:F1019 on a sheet that really has 5000+ rows). In read_only
+    # mode openpyxl trusts that tag and iter_rows stops early, silently
+    # dropping data. Discarding the cached range forces a full scan.
+    reset = getattr(ws, "reset_dimensions", None)
+    if callable(reset):
+        try:
+            reset()
+        except Exception:
+            pass
     for row in ws.iter_rows(values_only=False):
         out = []
         for c in row:
@@ -1041,7 +1051,10 @@ def _normalize_dst_code_fragment(value: object) -> str:
         return ""
     if re.fullmatch(r"\d+\.0+", s):
         return s.split(".", 1)[0]
-    return re.sub(r"\D+", "", s)
+    # Keep digits AND the separators the downstream splitter relies on
+    # (`,` and `;` for multi-code cells, `-` for ranges). Stripping commas
+    # here was collapsing "9320, 9330, 9340" into "932093309340".
+    return re.sub(r"[^0-9,;\-]", "", s)
 
 
 def _merge_vendor_special_mapping(
@@ -1053,6 +1066,7 @@ def _merge_vendor_special_mapping(
         pieces = [df[col].map(_normalize_dst_code_fragment) for col in source_cols]
 
         def _merge_dst(row: tuple[str, ...]) -> str:
+            # Concatenate fragments (e.g. Country Code "92" + Area Code "44" = "9244").
             return "".join(part for part in row if part)
 
         return pd.Series(list(map(_merge_dst, zip(*pieces))), index=df.index, dtype="object")
@@ -1109,16 +1123,52 @@ def _apply_vendor_header_mapping(df: pd.DataFrame, field_mappings: list[dict[str
 
     df = df.rename(columns=rename_map)
 
+    # Multi-source canonicals: tag with "__N" suffix in mapping order. The
+    # actual concat + cell cleaning happens later in the preprocessing
+    # pipeline via _merge_vendor_canonical_columns(), so this function stays
+    # a pure rename.
+    suffix_rename: Dict[str, str] = {}
     for canonical_name in ("Dst Code", "Billing Increment"):
         source_cols = target_sources.get(canonical_name) or []
-        if not source_cols:
-            continue
-        merged = _merge_vendor_special_mapping(df, canonical_name, source_cols)
-        df = _replace_columns_with_series(df, source_cols, canonical_name, merged)
+        for idx, col in enumerate(source_cols, start=1):
+            suffix_rename[col] = f"{canonical_name}__{idx}"
+    if suffix_rename:
+        df = df.rename(columns=suffix_rename)
 
-    missing = [col for col in REQUIRED_COLS if col not in df.columns]
+    def _is_present(name: str) -> bool:
+        if name in df.columns:
+            return True
+        return any(str(c).startswith(f"{name}__") for c in df.columns)
+
+    missing = [col for col in REQUIRED_COLS if not _is_present(col)]
     if missing:
         raise ValueError(f"Missing required canonical columns from vendor header mapping: {missing}")
+
+    return df
+
+
+_VENDOR_CANONICAL_SUFFIX_RE = re.compile(r"^(?P<base>.+)__(?P<idx>\d+)$")
+
+
+def _merge_vendor_canonical_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Collapse "{canonical}__1", "{canonical}__2", ... columns produced by
+    _apply_vendor_header_mapping into a single "{canonical}" column. Per-cell
+    cleaning (Excel ".0" rescue, separator preservation) runs here, before
+    concat. Suffixed source columns are dropped.
+    """
+    groups: Dict[str, list[tuple[int, str]]] = {}
+    for col in df.columns:
+        m = _VENDOR_CANONICAL_SUFFIX_RE.match(str(col))
+        if not m:
+            continue
+        groups.setdefault(m.group("base"), []).append((int(m.group("idx")), col))
+
+    for canonical_name, items in groups.items():
+        items.sort(key=lambda t: t[0])
+        source_cols = [c for _, c in items]
+        merged = _merge_vendor_special_mapping(df, canonical_name, source_cols)
+        df = _replace_columns_with_series(df, source_cols, canonical_name, merged)
 
     return df
 
@@ -1678,6 +1728,7 @@ def load_clean_rates(
     # 4) canonicalize & trim
     if vendor_header_mapping:
         df = _apply_vendor_header_mapping(df, vendor_header_mapping.get("field_mappings") or [])
+        df = _merge_vendor_canonical_columns(df)
     else:
         df = _canonicalize_headers(df)
     df = _synthesize_billing_increment(df)
@@ -1773,22 +1824,13 @@ def load_clean_rates(
         df = df.loc[~missing_any].copy()
         df.reset_index(drop=True, inplace=True)
 
-    # Guard against "false cleaning" – if almost everything was stripped out,
-    # treat this as a failure instead of silently writing a tiny file.
-    row_count = len(df)
-    if row_count <= 3:
-        raise ValueError(
-            f"Cleaning produced only {row_count} data rows after validation; "
-            "treating this as a failed/false cleaning run."
-        )
-
     # finally, write the cleaned sheet
     out_path, writer_kwargs = _normalize_excel_writer_path(output_path)
     df.to_excel(out_path, index=False, **writer_kwargs)
     return df
 # ──────────────────────────── quick test ─────────────────────────────────────
 if __name__ == '__main__':
-    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/HAYO_Dialing_Codes_And_Prefix_CLI.xlsx"
+    PATH = "C:/Users/Tahira Sadaf/Documents/attachments/CPL_033_HAYO_ORTP_033-20260423-153300.xlsx"
     OUT_PATH = "C:/Users/Tahira Sadaf/Documents/attachments/cleaned.xlsx"
     FILE_PATH = PATH
     OUTPUT_FILE_PATH = OUT_PATH 

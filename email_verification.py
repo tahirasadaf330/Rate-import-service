@@ -16,7 +16,7 @@ Optional:
   VERBOSE=1  # to print decoded token roles
 """
 
-import os, sys, re, json, base64, time, unicodedata
+import os, sys, re, json, base64, time, unicodedata, hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Set, Tuple, Optional, List, Dict
@@ -203,6 +203,8 @@ def _strip_date_time_tokens_for_invalid_subject(subj: str) -> str:
     subj = re.sub(r"\b(?:19|20)\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])\b", "", subj)
     # - DD-MM-YYYY, D/M/YYYY, DD.MM.YYYY
     subj = re.sub(r"\b(?:0?[1-9]|[12]\d|3[01])[-/.](?:0?[1-9]|1[0-2])[-/.](?:19|20)\d{2}\b", "", subj)
+    # - MM-DD-YYYY, M/D/YYYY, MM.DD.YYYY (US-style)
+    subj = re.sub(r"\b(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])[-/.](?:19|20)\d{2}\b", "", subj)
     # - compact yyyymmdd (very common in filenames)
     subj = re.sub(r"\b(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\b", "", subj)
     # - spaced variants after normalization: YYYY M D or D M YYYY
@@ -972,7 +974,9 @@ def process_inbox(session: requests.Session, user_email: str, after: Optional[st
             date_only = dt.astimezone(timezone.utc).strftime('%Y-%m-%d')
             time_only = dt.astimezone(timezone.utc).strftime('%H:%M:%S')
             safe_sender = sender.replace('@', '_at_')
-            save_dir = os.path.join(attachments_base, f"{safe_sender}_{date_time_str}")
+            # Append MD5 hash (first 8 chars) of internetMessageId for uniqueness
+            msg_id_hash = hashlib.md5((internet_msg_id or msg_id or "").encode()).hexdigest()[:8]
+            save_dir = os.path.join(attachments_base, f"{safe_sender}_{date_time_str}_{msg_id_hash}")
             print("  save_dir:", save_dir)
 
             # Idempotency: if this exact message-dir already exists, skip

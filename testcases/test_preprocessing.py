@@ -1258,6 +1258,156 @@ def clean_and_show_file(file_path, date_format='AUTO'):
         return False
 
 
+class TestRowCountGuardRemoved(unittest.TestCase):
+    """Requirement 3: Row count guard removed — files with <= 3 rows should process normally."""
+
+    def setUp(self):
+        if not PREPROCESS_AVAILABLE:
+            self.skipTest("preprocess_data module not available")
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _create_small_excel(self, row_count):
+        """Create a small Excel file with the given number of data rows."""
+        data = {
+            'Destination': [f'Country_{i}' for i in range(row_count)],
+            'Dst Code': [str(100 + i) for i in range(row_count)],
+            'Rate': [f'0.0{i+1}' for i in range(row_count)],
+            'Effective Date': ['2026-04-08' for _ in range(row_count)],
+            'Billing Increment': ['1/1' for _ in range(row_count)],
+        }
+        df = pd.DataFrame(data)
+        path = os.path.join(self.tmpdir, 'small_test.xlsx')
+        df.to_excel(path, index=False)
+        return path
+
+    def test_1_row_file_does_not_raise_error(self):
+        """A file with 1 data row should be processed without error."""
+        path = self._create_small_excel(1)
+        out_path = os.path.join(self.tmpdir, 'cleaned_1row.xlsx')
+        try:
+            result = preprocess_data.load_clean_rates(path, out_path, date_format_email='YYYY-MM-DD')
+            # Should succeed — no ValueError raised
+            self.assertIsNotNone(result)
+        except ValueError as e:
+            if 'Cleaning produced only' in str(e):
+                self.fail(f"Row count guard was NOT removed — still raises: {e}")
+            raise
+
+    def test_3_row_file_does_not_raise_error(self):
+        """A file with 3 data rows should be processed without error."""
+        path = self._create_small_excel(3)
+        out_path = os.path.join(self.tmpdir, 'cleaned_3row.xlsx')
+        try:
+            result = preprocess_data.load_clean_rates(path, out_path, date_format_email='YYYY-MM-DD')
+            self.assertIsNotNone(result)
+        except ValueError as e:
+            if 'Cleaning produced only' in str(e):
+                self.fail(f"Row count guard was NOT removed — still raises: {e}")
+            raise
+
+    def test_2_row_file_does_not_raise_error(self):
+        """A file with 2 data rows should also process without error."""
+        path = self._create_small_excel(2)
+        out_path = os.path.join(self.tmpdir, 'cleaned_2row.xlsx')
+        try:
+            result = preprocess_data.load_clean_rates(path, out_path, date_format_email='YYYY-MM-DD')
+            self.assertIsNotNone(result)
+        except ValueError as e:
+            if 'Cleaning produced only' in str(e):
+                self.fail(f"Row count guard was NOT removed — still raises: {e}")
+            raise
+
+    def test_3_row_cleaned_output_preserves_rows(self):
+        """A 3-row input should produce a 3-row cleaned DataFrame with the right codes."""
+        path = self._create_small_excel(3)
+        out_path = os.path.join(self.tmpdir, 'cleaned_3row_content.xlsx')
+        result = preprocess_data.load_clean_rates(path, out_path, date_format_email='YYYY-MM-DD')
+        self.assertEqual(len(result), 3)
+        self.assertEqual(sorted(result['Dst Code'].astype(str).tolist()), ['100', '101', '102'])
+        self.assertTrue(os.path.exists(out_path))
+
+    def test_row_count_guard_code_is_gone(self):
+        """Defense-in-depth: the 'Cleaning produced only' literal should not exist in preprocess_data."""
+        import inspect
+        src = inspect.getsource(preprocess_data)
+        self.assertNotIn('Cleaning produced only', src)
+
+
+class TestVendorMappingDstCodeSeparatorsPreserved(unittest.TestCase):
+    """
+    Regression: when the server has a vendor header mapping, the Dst Code column
+    is routed through `_normalize_dst_code_fragment`. Previously the fragment
+    normalizer stripped ALL non-digits — so a comma-separated multi-code cell
+    like "9320, 9330, 9340, 9350, 9360" collapsed into one giant number
+    `93209330934093509360`. Then the splitter saw no commas and produced a
+    single garbage row.
+
+    The fix: preserve `,`, `;`, `-` inside the fragment so downstream splitting
+    and range-expansion can still happen. Multi-column fragment concatenation
+    (e.g. Country Code "92" + Area Code "44" = "9244") is intentionally
+    preserved as-is via empty-string join.
+    """
+
+    def setUp(self):
+        if not PREPROCESS_AVAILABLE:
+            self.skipTest("preprocess_data module not available")
+
+    def test_fragment_preserves_comma_separators(self):
+        from preprocess_data import _normalize_dst_code_fragment
+        self.assertEqual(
+            _normalize_dst_code_fragment("9320, 9330, 9340, 9350, 9360"),
+            "9320,9330,9340,9350,9360",
+        )
+
+    def test_fragment_preserves_semicolons_and_hyphens(self):
+        from preprocess_data import _normalize_dst_code_fragment
+        self.assertEqual(_normalize_dst_code_fragment("1001;1002"), "1001;1002")
+        self.assertEqual(_normalize_dst_code_fragment("447400-447403"), "447400-447403")
+
+    def test_fragment_still_strips_letters_and_punctuation(self):
+        from preprocess_data import _normalize_dst_code_fragment
+        self.assertEqual(_normalize_dst_code_fragment("9320 (local)"), "9320")
+        self.assertEqual(_normalize_dst_code_fragment("abc9320xyz"), "9320")
+
+    def test_fragment_preserves_decimal_integer_shortcut(self):
+        from preprocess_data import _normalize_dst_code_fragment
+        # "93.0" should still shortcut to "93"
+        self.assertEqual(_normalize_dst_code_fragment("93.0"), "93")
+
+    def test_single_column_vendor_mapping_expands_to_multiple_rows(self):
+        """End-to-end: vendor mapping path with one comma-separated cell → N rows."""
+        from preprocess_data import _merge_vendor_special_mapping, expand_dst_code_rows
+        df = pd.DataFrame({
+            "DialCodes": ["9320, 9330, 9340, 9350, 9360"],
+            "Rate": [0.1861],
+            "Effective Date": ["2026-05-01"],
+            "Billing Increment": ["60/1"],
+        })
+        df["Dst Code"] = _merge_vendor_special_mapping(df, "Dst Code", ["DialCodes"])
+        self.assertEqual(df["Dst Code"].iloc[0], "9320,9330,9340,9350,9360")
+
+        expanded = expand_dst_code_rows(df)
+        self.assertEqual(len(expanded), 5)
+        self.assertEqual(
+            sorted(expanded["Dst Code"].tolist()),
+            ["9320", "9330", "9340", "9350", "9360"],
+        )
+
+    def test_multi_column_country_plus_area_code_still_concatenates(self):
+        """Regression guard: Country Code + Area Code merging must still work."""
+        from preprocess_data import _merge_vendor_special_mapping
+        df = pd.DataFrame({
+            "Country Code": ["92", "92", "92", "92"],
+            "Area Code":    ["44", "45", "46", "47"],
+        })
+        out = _merge_vendor_special_mapping(df, "Dst Code", ["Country Code", "Area Code"])
+        self.assertEqual(list(out), ["9244", "9245", "9246", "9247"])
+
+
 if __name__ == '__main__':
     import sys
     if len(sys.argv) > 1:

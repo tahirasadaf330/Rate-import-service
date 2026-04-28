@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 import email_verification
 import json
+import hashlib
 from pathlib import Path
 from datetime import datetime, timezone
 class TestEmailVerification(unittest.TestCase):
@@ -311,6 +312,45 @@ class TestEmailVerification(unittest.TestCase):
             with patch('builtins.print') as mock_print:
                 email_verification.dbg('test')
                 mock_print.assert_called()
+
+    # --- Requirement 2: MD5 hash in directory naming ---
+
+    def test_md5_hash_produces_unique_directories_for_same_sender_same_time(self):
+        """Two different internetMessageIds from same sender at same time → different hashes."""
+        msg_id_1 = "<4EF637559170AF9EE0630100007F05DA@dataaccessvoip.com>"
+        msg_id_2 = "<4C9C902BC0B8397FE0630100007FD19C@dataaccessvoip.com>"
+
+        hash_1 = hashlib.md5(msg_id_1.encode()).hexdigest()[:8]
+        hash_2 = hashlib.md5(msg_id_2.encode()).hexdigest()[:8]
+
+        self.assertEqual(len(hash_1), 8)
+        self.assertEqual(len(hash_2), 8)
+        self.assertNotEqual(hash_1, hash_2, "Two different message IDs should produce different MD5 hashes")
+
+        # Build directory names
+        base = "rates_at_dataaccessvoip.com_20260408_162814"
+        dir_1 = f"{base}_{hash_1}"
+        dir_2 = f"{base}_{hash_2}"
+        self.assertNotEqual(dir_1, dir_2)
+
+    def test_md5_hash_is_deterministic(self):
+        """Same internetMessageId always produces the same hash."""
+        msg_id = "<4EF637559170AF9EE0630100007F05DA@dataaccessvoip.com>"
+        hash_1 = hashlib.md5(msg_id.encode()).hexdigest()[:8]
+        hash_2 = hashlib.md5(msg_id.encode()).hexdigest()[:8]
+        self.assertEqual(hash_1, hash_2, "Same message ID should always produce same hash (idempotent)")
+
+    def test_md5_directory_name_within_varchar_255(self):
+        """Directory name with MD5 hash should stay within VARCHAR(255) limit."""
+        # Use a long sender email to test worst case
+        sender = "very.long.email.address.rates@verylongcompanydomainname.com"
+        safe_sender = sender.replace('@', '_at_')
+        date_time_str = "20260408_162814"
+        msg_id = "<SOME_LONG_MESSAGE_ID@domain.com>"
+        msg_hash = hashlib.md5(msg_id.encode()).hexdigest()[:8]
+        dir_name = f"{safe_sender}_{date_time_str}_{msg_hash}"
+        self.assertLessEqual(len(dir_name), 255, f"Directory name '{dir_name}' exceeds VARCHAR(255)")
+
 
 if __name__ == '__main__':
     unittest.main()
