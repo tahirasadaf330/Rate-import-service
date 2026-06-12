@@ -147,7 +147,8 @@ def fuzzy_score(a: str, b: str) -> float:
     return 0.85 * base + 0.15 * jacc
 
 def name_starts_with_term(name: str) -> bool:
-    return str(name).lstrip().upper().startswith("TERM")
+    prefix = os.getenv("JERA_TABLE_PREFIX", "TERM").upper()
+    return str(name).lstrip().upper().startswith(prefix)
 
 def name_contains_company(name: str, company_kw: str) -> bool:
     return company_kw in normalize(name)
