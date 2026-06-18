@@ -106,8 +106,8 @@ def effective_note(new_date: Optional[pd.Timestamp], as_of: pd.Timestamp, notice
     if new_date < as_of:
         return "immediate effective date"
     if new_date >= as_of + pd.Timedelta(days=notice_days):
-        return "proper 7-day notice"
-    return "new without 7-day notice"
+        return "proper 6-day notice"
+    return "new without 6-day notice"
 
 #############################
 # Counting stats like number of rows, increase, decrease etc..
@@ -281,7 +281,7 @@ def compare(
         if right_only[i]:
             change_type = "New"
             eff_note = effective_note(n_date, as_of, notice_days)
-            status = "Accepted" if eff_note == "proper 7-day notice" else "Rejected"
+            status = "Accepted" if eff_note == "proper 6-day notice" else "Rejected"
             notes.append(eff_note)
             reasons = validate_row(pd.Series({COL_CODE: r[COL_CODE], COL_RATE: n_rate, COL_EDATE: n_date, COL_BI: r.get(f"{COL_BI}_new", "")}))
             if reasons:
@@ -311,9 +311,9 @@ def compare(
             if n_date < as_of:
                 status = "Rejected"
                 notes.append("immediate effective date")
-            elif eff_note == "proper 7-day notice":
+            elif eff_note == "proper 6-day notice":
                 status = "Accepted"
-                notes.append("proper 7-day notice")
+                notes.append("proper 6-day notice")
             else:
                 status = "Rejected"
                 notes.append(eff_note)
@@ -349,10 +349,10 @@ def compare(
                         change_type = "Backdated Increase"
                         status = "Rejected"
                         notes.append("immediate effective date")
-                    elif eff_note == "proper 7-day notice":
+                    elif eff_note == "proper 6-day notice":
                         change_type = "Increase"
                         status = "Accepted"
-                        notes.append("proper 7-day notice")
+                        notes.append("proper 6-day notice")
                     else:
                         change_type = "Increase"
                         status = "Rejected"
@@ -421,7 +421,7 @@ if __name__ == "__main__":
         left_df,
         right_df,
         as_of_date="2025-11-06",
-        notice_days=7,
+        notice_days=6,
         rate_tol=0.0,
     )
 

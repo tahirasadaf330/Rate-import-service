@@ -1103,8 +1103,16 @@ def _apply_vendor_header_mapping(df: pd.DataFrame, field_mappings: list[dict[str
         if not source_header or not canonical_name:
             continue
 
-        source_key = _strip_currency_words_from_key(_norm(_preclean_header_token(source_header)))
-        candidates = normalized_headers.get(source_key, [])
+        # Try exact match first (case-insensitive, stripped) to avoid false ambiguity
+        # when two columns share the same base name but differ only in parentheticals
+        # e.g. "Effective Start Date (Rate)" vs "Effective Start Date (Dialing Code)"
+        source_header_stripped = source_header.strip()
+        exact_candidates = [col for col in df.columns if col.strip().lower() == source_header_stripped.lower()]
+        if exact_candidates:
+            candidates = exact_candidates
+        else:
+            source_key = _strip_currency_words_from_key(_norm(_preclean_header_token(source_header)))
+            candidates = normalized_headers.get(source_key, [])
         if not candidates:
             raise ValueError(f"Mapped source header not found in sheet: {source_header}")
         if len(candidates) > 1:
@@ -1240,10 +1248,31 @@ def _read_raw_matrix_for_vendor_mapping(path: str, field_mappings: list[dict[str
         if not sheet_names:
             sheet_names = [sheet if sheet is not None else 0]
 
+        # Check if any mapped source_header is a formula string (starts with '=').
+        # If so, we need to read with data_only=False to get formula strings instead
+        # of stale cached values (e.g. Bharti files where cache was never updated by Excel).
+        has_formula_headers = any(
+            str(row.get("source_header") or "").strip().startswith("=")
+            for row in field_mappings
+        )
+
+        def _read_sheet(sheet_name):
+            if has_formula_headers:
+                # Read with openpyxl data_only=False to get raw formula strings for header matching
+                wb_f = load_workbook(path, data_only=False, read_only=True)
+                try:
+                    ws_f = next((ws for ws in wb_f.worksheets if ws.title == sheet_name), None)
+                    if ws_f is None:
+                        raise ValueError(f"Sheet not found: {sheet_name}")
+                    return _raw_from_ws(ws_f)
+                finally:
+                    wb_f.close()
+            return _raw_from_excel_pandas(path, sheet_name)
+
         last_error = None
         for sheet_name in sheet_names:
             try:
-                raw = _raw_from_excel_pandas(path, sheet_name)
+                raw = _read_sheet(sheet_name)
                 header_row_idx = _detect_header_row_from_vendor_mapping(raw, field_mappings)
                 return raw, header_row_idx
             except Exception as exc:

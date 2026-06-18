@@ -1153,7 +1153,7 @@ def process_one_folder(folder: Path) -> str:
                     # exact match mode (no tolerance)
                     # show progress for large comparisons so it doesn't look "stuck"
                     progress_every = int(os.getenv("COMPARE_PROGRESS_EVERY", "0") or "0")
-                    result, stats = compare(left_df, right_df, as_of_date, 7, 0.0, is_partial=is_partial_vendor, progress_every=progress_every)
+                    result, stats = compare(left_df, right_df, as_of_date, 6, 0.0, is_partial=is_partial_vendor, progress_every=progress_every)
                     out_path = folder / f"{v.stem}_comparision_result.xlsx"
                     write_excel(result, str(out_path))
                     print(f"[{folder.name}] wrote result to {out_path}")
