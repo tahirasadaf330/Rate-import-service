@@ -284,14 +284,38 @@ def process_bulk_upload(upload: Dict[str, Any], dry_run: bool = False) -> bool:
 
         details = fetch_rate_upload_details_for_upload(upload_id, statuses=accepted_statuses)
         df = pd.DataFrame(details or [])
+
+        # Full-file fallback (Option B): when there are NO accepted rows, import the
+        # vendor's entire rate set ONLY IF the file is genuinely unchanged — i.e. it
+        # also has no Rejected rows. Rejections (short-notice increases, Closed,
+        # Stashed, invalid) must stay out of JeraSoft, so if any exist we do NOT
+        # import the full file and keep the original no-accepted-rows behavior.
+        full_file_import = False
         if df.empty:
-            print("⚠️ No accepted rows found in DB for this upload_id")
-            update_bulk_upload_status(upload_id, 'failed', {
-                'error': 'no_accepted_rows_in_db',
-                'accepted_statuses': list(accepted_statuses),
-                'processed_at': datetime.now().isoformat()
-            })
-            return False
+            rejected_rows = fetch_rate_upload_details_for_upload(upload_id, statuses=("Rejected",))
+            if rejected_rows:
+                print("⚠️ No accepted rows, but rejected rows exist → holding back (no full-file import)")
+                update_bulk_upload_status(upload_id, 'failed', {
+                    'error': 'no_accepted_rows_in_db',
+                    'accepted_statuses': list(accepted_statuses),
+                    'note': 'rejected rows present; full-file import not applied',
+                    'processed_at': datetime.now().isoformat()
+                })
+                return False
+
+            # No accepted and no rejected → the file is unchanged; import it in full.
+            details = fetch_rate_upload_details_for_upload(upload_id, statuses=None)
+            df = pd.DataFrame(details or [])
+            if df.empty:
+                print("⚠️ No rows at all found in DB for this upload_id")
+                update_bulk_upload_status(upload_id, 'failed', {
+                    'error': 'no_rows_in_db',
+                    'processed_at': datetime.now().isoformat()
+                })
+                return False
+            full_file_import = True
+            accepted_statuses = None  # do NOT re-filter to Accepted; upload every row
+            print(f"ℹ️ No accepted/rejected changes → importing FULL vendor file ({len(df)} rows)")
 
         # Map DB column names -> uploader expected names
         rename = {
