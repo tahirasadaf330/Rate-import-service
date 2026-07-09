@@ -417,6 +417,31 @@ def _raw_from_excel_pandas(path: str, sheet) -> pd.DataFrame:
             continue
     raise last_exc if last_exc else RuntimeError("read_excel failed with both calamine and openpyxl")
 
+# Encodings tried when reading CSV/TSV files. UTF-8 first (the common, correct
+# case) so files that already read fine are unaffected; the Windows/Excel
+# encodings are only reached if UTF-8 decoding fails. latin-1 is last because it
+# never raises on any byte, so it's a safe final resort.
+_CSV_ENCODINGS = ("utf-8", "utf-8-sig", "cp1252", "latin-1")
+
+def _read_csv_multi_encoding(path: str, **kwargs) -> pd.DataFrame:
+    """
+    pd.read_csv wrapper that retries with fallback encodings ONLY on a
+    UnicodeDecodeError. Any other error (parser error, empty file, etc.) is
+    raised immediately so the caller's existing fallback logic still handles it.
+    A valid UTF-8 file returns on the first attempt, so behavior is unchanged
+    for files that already succeed.
+    """
+    last_decode_err: UnicodeDecodeError | None = None
+    for enc in _CSV_ENCODINGS:
+        try:
+            return pd.read_csv(path, encoding=enc, **kwargs)
+        except UnicodeDecodeError as e:
+            last_decode_err = e
+            continue
+    # latin-1 decodes any byte, so this is effectively unreachable; re-raise
+    # the last decode error just in case the encoding list is ever narrowed.
+    raise last_decode_err if last_decode_err else RuntimeError("CSV read failed")
+
 # ── PATCH 2: strengthen _read_raw_matrix to try pandas when there are 0 worksheets
 #             and as a final fallback when header detection fails on all sheets. ──
 def _read_raw_matrix(path: str, sheet=0, strict_sheet: bool = False) -> pd.DataFrame:
@@ -577,8 +602,8 @@ def _read_raw_matrix(path: str, sheet=0, strict_sheet: bool = False) -> pd.DataF
     else:
         # Non-Excel → treat as CSV/TSV/etc.
         try:
-            # First try: default CSV reading
-            df = pd.read_csv(path, header=None, dtype=str)
+            # First try: default CSV reading (UTF-8, with encoding fallback)
+            df = _read_csv_multi_encoding(path, header=None, dtype=str)
             print(f"DEBUG: Successfully read CSV with default engine. Shape: {df.shape}")
             return df
         except Exception as e:
@@ -589,7 +614,7 @@ def _read_raw_matrix(path: str, sheet=0, strict_sheet: bool = False) -> pd.DataF
             print("DEBUG: Trying to skip header lines and find CSV data...")
             for skip_lines in range(0, 10):  # Try skipping 0-9 lines
                 try:
-                    df = pd.read_csv(path, header=None, dtype=str, skiprows=skip_lines)
+                    df = _read_csv_multi_encoding(path, header=None, dtype=str, skiprows=skip_lines)
                     if df.shape[1] >= 4:  # CSV should have at least 4 columns
                         print(f"DEBUG: Found CSV data starting at line {skip_lines + 1}. Shape: {df.shape}")
                         print(f"DEBUG: First 5 rows after skipping {skip_lines} lines:")
@@ -601,7 +626,7 @@ def _read_raw_matrix(path: str, sheet=0, strict_sheet: bool = False) -> pd.DataF
             
             # If still failing, try with Python engine and error handling
             print("DEBUG: Trying Python engine with error handling as final fallback...")
-            df = pd.read_csv(path, header=None, dtype=str, engine='python', on_bad_lines='skip')
+            df = _read_csv_multi_encoding(path, header=None, dtype=str, engine='python', on_bad_lines='skip')
             print(f"DEBUG: Python engine result. Shape: {df.shape}")
             return df
 
