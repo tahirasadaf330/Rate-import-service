@@ -1256,17 +1256,29 @@ def _read_raw_matrix_for_vendor_mapping(path: str, field_mappings: list[dict[str
             for row in field_mappings
         )
 
+        # Reading raw formula TEXT (data_only=False) is only supported by
+        # openpyxl, i.e. for .xlsx/.xlsm. Legacy .xls cannot be opened by
+        # openpyxl, and no available reader (xlrd/calamine) exposes .xls
+        # formula strings — so for .xls we fall back to the value-based read
+        # instead of crashing.
+        formula_read_supported = ext in ('.xlsx', '.xlsm')
+
         def _read_sheet(sheet_name):
-            if has_formula_headers:
+            if has_formula_headers and formula_read_supported:
                 # Read with openpyxl data_only=False to get raw formula strings for header matching
-                wb_f = load_workbook(path, data_only=False, read_only=True)
                 try:
-                    ws_f = next((ws for ws in wb_f.worksheets if ws.title == sheet_name), None)
-                    if ws_f is None:
-                        raise ValueError(f"Sheet not found: {sheet_name}")
-                    return _raw_from_ws(ws_f)
-                finally:
-                    wb_f.close()
+                    wb_f = load_workbook(path, data_only=False, read_only=True)
+                    try:
+                        ws_f = next((ws for ws in wb_f.worksheets if ws.title == sheet_name), None)
+                        if ws_f is None:
+                            raise ValueError(f"Sheet not found: {sheet_name}")
+                        return _raw_from_ws(ws_f)
+                    finally:
+                        wb_f.close()
+                except Exception as e:
+                    # If the formula-mode read fails for any reason, degrade to the
+                    # value-based read rather than failing the whole file.
+                    dbg(f"[vendor-mapping] formula-mode read failed ({e}); falling back to displayed values")
             return _raw_from_excel_pandas(path, sheet_name)
 
         last_error = None
