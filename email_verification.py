@@ -16,7 +16,7 @@ Optional:
   VERBOSE=1  # to print decoded token roles
 """
 
-import os, sys, re, json, base64, time, unicodedata, hashlib
+import os, sys, re, json, base64, time, unicodedata, hashlib, io, zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Set, Tuple, Optional, List, Dict
@@ -681,7 +681,8 @@ def save_matching_attachments_for_user(session: requests.Session, user_email: st
                 skip_details.append({"name": raw_name, "ext": ext.lower(), "reason": "not_fileAttachment"})
                 continue
 
-            if ext.lower() not in allowed_exts:
+            # Allow .zip through the gate; its allowed contents are extracted below.
+            if ext.lower() != ".zip" and ext.lower() not in allowed_exts:
                 skipped += 1
                 skip_details.append({"name": raw_name, "ext": ext.lower(), "reason": "extension_not_allowed"})
                 continue
@@ -708,6 +709,50 @@ def save_matching_attachments_for_user(session: requests.Session, user_email: st
                 print(f"   ↳ skipped {filename}: {sz} bytes exceeds limit")
                 skipped += 1
                 skip_details.append({"name": raw_name, "ext": ext.lower(), "reason": "too_large"})
+                continue
+
+            # ZIP attachment: extract the allowed rate-sheet files into save_dir
+            # so the rest of the pipeline (which handles a folder of files) can
+            # process them. The zip itself is never written to disk.
+            if ext.lower() == ".zip":
+                try:
+                    extracted = 0
+                    with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+                        for info in zf.infolist():
+                            if info.is_dir():
+                                continue
+                            # basename() strips any directory path in the entry,
+                            # preventing zip-slip path traversal (e.g. ../../x.xlsx).
+                            inner_name = safe_filename(os.path.basename(info.filename))
+                            if not inner_name:
+                                continue
+                            inner_ext = os.path.splitext(inner_name)[1].lower()
+                            if inner_ext not in allowed_exts:
+                                skip_details.append({"name": info.filename, "ext": inner_ext, "reason": "zip_inner_extension_not_allowed"})
+                                continue
+                            if info.file_size < min_bytes:
+                                skip_details.append({"name": info.filename, "ext": inner_ext, "reason": "zip_inner_too_small"})
+                                continue
+                            if info.file_size > max_bytes:
+                                skip_details.append({"name": info.filename, "ext": inner_ext, "reason": "zip_inner_too_large"})
+                                continue
+                            inner_blob = zf.read(info)
+                            inner_path = unique_path(save_dir, inner_name)
+                            if DRY_RUN:
+                                dbg("   -> DRY_RUN: would extract to", inner_path)
+                            else:
+                                with open(inner_path, "wb") as f:
+                                    f.write(inner_blob)
+                                print(f"   ↳ extracted from zip: {inner_path}")
+                                saved_files.append(os.path.basename(inner_path))
+                            extracted += 1
+                            saved = True
+                    if extracted == 0:
+                        skipped += 1
+                        skip_details.append({"name": raw_name, "ext": ".zip", "reason": "zip_no_allowed_files"})
+                except zipfile.BadZipFile:
+                    skipped += 1
+                    skip_details.append({"name": raw_name, "ext": ".zip", "reason": "bad_zip"})
                 continue
 
             path = unique_path(save_dir, filename)
