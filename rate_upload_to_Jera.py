@@ -539,7 +539,20 @@ def bulk_import_rates(df: pd.DataFrame, table_id: int,
     """
     if not J_API_KEY:
         raise ValueError("Missing JERA_SOFT_API_KEY")
-    
+
+    # Use the target table's OWN code deck instead of a hardcoded value.
+    # JeraSoft rejects an import that specifies a code deck the table isn't on
+    # ("Code Deck is not allowed for this import"): CN tables are on deck 66,
+    # Hayo tables on deck 19. Sending the table's own deck works for all of them.
+    try:
+        from jerasoft import get_table_code_deck_id
+        _deck = get_table_code_deck_id(table_id)
+    except Exception as _e:
+        print(f"   (warn) could not resolve code deck for table {table_id}: {_e}")
+        _deck = None
+    _code_decks_id = str(_deck) if _deck else "1"
+    print(f"   Using code_decks_id={_code_decks_id} for table {table_id}")
+
     # Default import settings (can be overridden with import_templates_id)
     default_settings = {
         "agreements_tolerance": "",
@@ -552,7 +565,7 @@ def bulk_import_rates(df: pd.DataFrame, table_id: int,
         "blocked_keywords": ["block"],
         "closed_keywords": ["close", "delete", "terminate", "deactivate", "remove"],
         "code_deck_mode": "",
-        "code_decks_id": "1",
+        "code_decks_id": _code_decks_id,
         "datetime_format": "mdy",
         "error_mode": "skip_rows",
         "rate_deviation_tolerance": "",

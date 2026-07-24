@@ -311,6 +311,23 @@ def get_table_id_by_name(
     return None
 
 
+def get_table_code_deck_id(
+    table_id: int,
+    api_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> Optional[int]:
+    """
+    Return the code_decks_id a rate table is linked to, or None if not found.
+    Used so imports send the table's OWN code deck instead of a hardcoded value
+    (JeraSoft rejects a code deck the table isn't on: "Code Deck is not allowed
+    for this import" — e.g. CN tables are on deck 66, Hayo tables on deck 19).
+    """
+    for t in fetch_all_tables(api_url=api_url, api_key=api_key):
+        if t.get("id") == table_id:
+            return t.get("code_decks_id")
+    return None
+
+
 def fetch_active_current_future_rates(
     table_id: int,
     api_url: Optional[str] = None,
