@@ -764,6 +764,11 @@ def process_one_folder(folder: Path) -> str:
         except Exception as e:
             meta["keyword_error"] = str(e)
             meta["jera_fetched"] = False  # Mark JeraSoft fetch as failed in metadata
+            # Clear the cached table name so a retry re-resolves it from the current
+            # (possibly corrected) mapping instead of reusing the name that just failed.
+            # Only runs on a JERA-fetch failure; later-stage failures keep the table.
+            meta.pop("force_jerasoft_table_name", None)
+            meta["waiting_for_jera_table"] = False
             save_metadata(folder, meta)
             
             # Update processing_statuses to mark jera_fetched as failed

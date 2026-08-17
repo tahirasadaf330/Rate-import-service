@@ -1632,7 +1632,14 @@ def find_invalid_subject_detail(invalid_subject_id: int, subject: str) -> Option
     """
     Return (detail_id, jera_table) if present for this subject; else None.
     """
-    sql = "SELECT id, jera_table FROM invalid_subject_details WHERE invalid_subject_id = %s AND subject = %s"
+    # Prefer a row that has a table set, newest first, so a corrected mapping wins
+    # over stale/duplicate rows (plain INSERTs can leave more than one row per subject).
+    sql = (
+        "SELECT id, jera_table FROM invalid_subject_details "
+        "WHERE invalid_subject_id = %s AND subject = %s "
+        "ORDER BY (jera_table IS NOT NULL) DESC, created_at DESC "
+        "LIMIT 1"
+    )
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, (invalid_subject_id, subject))
         row = cur.fetchone()
@@ -1655,6 +1662,7 @@ def find_approved_jera_table_for_subject(email: str, subject: str) -> Optional[s
          WHERE isub.email = %s
            AND isd.subject = %s
            AND isd.jera_table IS NOT NULL
+         ORDER BY isd.created_at DESC
          LIMIT 1
     """
     with get_conn() as conn, conn.cursor() as cur:
